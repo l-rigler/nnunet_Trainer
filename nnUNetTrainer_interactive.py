@@ -1,27 +1,15 @@
-import inspect
-import multiprocessing
-import os
-import shutil
-import sys
-import warnings
-from copy import deepcopy
-from datetime import datetime
-from time import time, sleep
-from typing import Union, Tuple, List
-
 import numpy as np
 import torch
-
 import torchvision.transforms.functional as F
-
-# import nnunetv2.training.nnUNetTrainer.nnUNetTrainer as nnUNetTrainer
+import nnunetv2.training.nnUNetTrainer.nnUNetTrainer as nnUNetTrainer
 from nnunetv2.utilities.helpers import dummy_context
 # from . import Hook
 from . import my_utils as Mutils
 import matplotlib.pyplot as plt          
 import pandas as pd
 # from . import metrics_base as MB
-class interactive_nnUNetTrainer(nnUNetTrainer):
+
+class nnUNetTrainerinteractive(nnUNetTrainer):
     """custom nnUNet Trainer that train also for interactive segmentation and prediction refinement"""
 
     def __init__(
