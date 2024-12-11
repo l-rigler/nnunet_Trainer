@@ -712,4 +712,3 @@ if __name__=='__main__':
     C=[torch.randint(0,10,(5,10,5,3))]*5
     D=A.forward(C,B,click_mask,2,0.2)
     print(D)
-test='testtestetsset'
