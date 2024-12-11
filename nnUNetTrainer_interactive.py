@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 # from . import metrics_base as MB
 
-class nnUNetTrainer_interactive(nnUNetTrainer):
+class nnUNetTrainerinteractive(nnUNetTrainer):
     """custom nnUNet Trainer that train also for interactive segmentation and prediction refinement"""
 
     def __init__(
