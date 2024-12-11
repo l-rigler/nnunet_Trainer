@@ -8,8 +8,10 @@ from copy import deepcopy
 from datetime import datetime
 from time import time, sleep
 from typing import Union, Tuple, List
+
 import numpy as np
 import torch
+
 import torchvision.transforms.functional as F
 
 # import nnunetv2.training.nnUNetTrainer.nnUNetTrainer as nnUNetTrainer
@@ -95,7 +97,7 @@ class interactive_nnUNetTrainer(nnUNetTrainer):
                 # data=self.add_guidance(data,target,'global')
                 data[:,1:]=data[:,1:]*0
                 net_output0=self.network(data)
-                self.loss.loss.net_output0=net_output0
+                self.loss.net_output0=net_output0
                 data,click_map=self.add_guidance(data,target,'global')
         
         self.optimizer.zero_grad(set_to_none=True)
@@ -145,7 +147,7 @@ class interactive_nnUNetTrainer(nnUNetTrainer):
         with torch.no_grad():
             data[:,1:]=data[:,1:]*0
             net_output0=self.network(data)
-            self.loss.loss.net_output0=net_output0
+            self.loss.net_output0=net_output0
             data,click_map=self.add_guidance(data,target,training_mode=False)
             
         # Autocast can be annoying
