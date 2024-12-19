@@ -149,7 +149,7 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
         self.incr = 0
         self.epoch_incr = 0
         self.enable_deep_supervision = True
-        self.num_epochs = 400 #change this to change max number of epoch 
+        self.num_epochs = 600 #change this to change max number of epoch 
 
     def _build_loss(self,):
         """function to define the loss of the model and to configure the deep supervision"""
@@ -210,8 +210,8 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
             # l = self.loss(output, target)
             if self.current_epoch>0:
                 self.loss.click_map=torch.sum(torch.where(click_map>0,1,0),axis=1)
-                self.loss.loss.alpha=1-(self.current_epoch/self.num_epochs)
-                # self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.num_epochs))
+                # self.loss.loss.alpha=1-(self.current_epoch/self.num_epochs)
+                self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.num_epochs))
             
             l=self.loss(output,target)
            
@@ -254,8 +254,8 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
             del data
 
             self.loss.click_map=torch.sum(torch.where(click_map>0,1,0),axis=1)
-            self.loss.loss.alpha=1-(self.current_epoch/self.num_epochs)
-            # self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.num_epochs))
+            # self.loss.loss.alpha=1-(self.current_epoch/self.num_epochs)
+            self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.num_epochs))
             l = self.loss(output, target)
 
         # we only need the output with the highest output resolution (if DS enabled)
