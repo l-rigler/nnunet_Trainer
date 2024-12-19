@@ -28,11 +28,13 @@ def dilatation_in_3d(image,device=None):
     kernel=torch.full((3,3,3),1,dtype=image_type,device=device).unsqueeze(0).unsqueeze(0)
     return torch.where(TF.conv3d(image.unsqueeze(0).unsqueeze(0),kernel,padding=1)>=1,1,0).squeeze(0).squeeze(0)
 
-def get_probabilities(mask,mode='3d'):
+def get_probabilities(mask,ignore_labelmap,mode='3d'):
     if mode=='3d':
         contour=dilatation_in_3d(mask)-mask
     else:
         contour=dilatation(mask)-mask
+    if ignore_labelmap.sum()!=0:
+       contour=contour*ignore_labelmap 
     dist=chamfer_distance_torch(torch.nonzero(mask==1).float(),torch.nonzero(contour==1).float())
     return torch.exp(dist)-1
 
@@ -436,10 +438,14 @@ def choose_label(gt,seg,click_rule='proportional'):
         return chosen_label.item()
 
 
-def global_rule_selection(gt,seg):
+def global_rule_selection(gt,seg,ignore_label=None,):
     """3d rule based on the error size to choose the pixel"""
     errors=(gt!=seg).float()
-    proba_click=get_probabilities(errors)
+    if ignore_label is not None :
+        ignore_mask=gt!=ignore_label 
+    else:
+        ignore_mask=torch.zeros(1,device=torch.device('cuda:0'))
+    proba_click=get_probabilities(errors,ignore_mask)
     proba_with_treshold=torch.where(proba_click>2,proba_click,0)
     if proba_with_treshold.sum()==0:
         return None,None
@@ -452,7 +458,7 @@ def global_rule_selection(gt,seg):
     return click,chosen_label
 
 
-def select_pixel_3d(gt,seg,mode='global'):
+def select_pixel_3d(gt,seg,mode='global',ignore_label=None):
     """function that given a prediction and its associate groundtruth choose a pixel for guidande with respect to a precised rule (max, proportionnal or global)
     gt and seg should have the same dimension (d,h,w)"""
     if mode == 'global':
@@ -502,7 +508,7 @@ def click_simulation_test(self,data,target,training_mode=True,click_mode='global
                     # prediction = torch.max(probabilities,dim=1)[1]
                     prediction = torch.max(logits[0],dim=1)[1]
                 for nimage in range(b):       
-                        click, chosen_label=select_pixel_3d(groundtruth[nimage,0],prediction[nimage],mode=click_mode)
+                        click, chosen_label=select_pixel_3d(groundtruth[nimage,0],prediction[nimage],mode=click_mode,ignore_label=self.label_manager.ignore_label)
                         if click==None:
                             print('no error big enough,skiping image{}'.format(nimage))
                             continue

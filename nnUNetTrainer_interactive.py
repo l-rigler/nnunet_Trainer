@@ -187,13 +187,14 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
         else:
             target = target.to(self.device, non_blocking=True)
 
-        if self.current_epoch>0:
+        if self.current_epoch>5:
             with torch.no_grad():
                 # data=self.add_guidance(data,target,'global')
                 data[:,1:]=data[:,1:]*0
                 net_output0=self.network(data)
                 self.loss.net_output0=net_output0
-                data,click_map=self.add_guidance(data,target,'global')
+                if self.current_epoch>0:
+                    data,click_map=self.add_guidance(data,target,'global')
         
         self.optimizer.zero_grad(set_to_none=True)
         # Autocast can be annoying
@@ -243,8 +244,12 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
             data[:,1:]=data[:,1:]*0
             net_output0=self.network(data)
             self.loss.net_output0=net_output0
-            data,click_map=self.add_guidance(data,target,training_mode=False)
-            
+            if self.current_epoch > 0 : 
+                data,click_map=self.add_guidance(data,target,training_mode=False)
+                self.loss.click_map=torch.sum(torch.where(click_map>0,1,0),axis=1)
+                # self.loss.loss.alpha=1-(self.current_epoch/self.num_epochs)
+                self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.num_epochs))
+
         # Autocast can be annoying
         # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
@@ -253,9 +258,7 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
             output = self.network(data)
             del data
 
-            self.loss.click_map=torch.sum(torch.where(click_map>0,1,0),axis=1)
-            # self.loss.loss.alpha=1-(self.current_epoch/self.num_epochs)
-            self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.num_epochs))
+            
             l = self.loss(output, target)
 
         # we only need the output with the highest output resolution (if DS enabled)
