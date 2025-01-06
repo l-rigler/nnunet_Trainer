@@ -187,14 +187,13 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
         else:
             target = target.to(self.device, non_blocking=True)
 
-        if self.current_epoch>5:
+        if self.current_epoch>0:
             with torch.no_grad():
                 # data=self.add_guidance(data,target,'global')
                 data[:,1:]=data[:,1:]*0
                 net_output0=self.network(data)
                 self.loss.net_output0=net_output0
-                if self.current_epoch>0:
-                    data,click_map=self.add_guidance(data,target,'global')
+                data,click_map=self.add_guidance(data,target,'global')
         
         self.optimizer.zero_grad(set_to_none=True)
         # Autocast can be annoying
@@ -207,8 +206,6 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
             else dummy_context()
         ):
             output = self.network(data)
-            # del data
-            # l = self.loss(output, target)
             if self.current_epoch>0:
                 self.loss.click_map=torch.sum(torch.where(click_map>0,1,0),axis=1)
                 # self.loss.loss.alpha=1-(self.current_epoch/self.num_epochs)

@@ -34,7 +34,7 @@ def get_probabilities(mask,ignore_labelmap,mode='3d'):
     else:
         contour=dilatation(mask)-mask
     if ignore_labelmap.sum()!=0:
-       contour=contour*ignore_labelmap 
+       contour=contour*ignore_labelmap
     dist=chamfer_distance_torch(torch.nonzero(mask==1).float(),torch.nonzero(contour==1).float())
     return torch.exp(dist)-1
 
@@ -438,7 +438,7 @@ def choose_label(gt,seg,click_rule='proportional'):
         return chosen_label.item()
 
 
-def global_rule_selection(gt,seg,ignore_label=None,):
+def global_rule_selection(gt,seg,ignore_label=None):
     """3d rule based on the error size to choose the pixel"""
     errors=(gt!=seg).float()
     if ignore_label is not None :
@@ -462,7 +462,7 @@ def select_pixel_3d(gt,seg,mode='global',ignore_label=None):
     """function that given a prediction and its associate groundtruth choose a pixel for guidande with respect to a precised rule (max, proportionnal or global)
     gt and seg should have the same dimension (d,h,w)"""
     if mode == 'global':
-        return global_rule_selection(gt,seg)
+        return global_rule_selection(gt,seg,ignore_label)
     else:
         chosen_label=choose_label(gt,seg,click_rule=mode)
         if chosen_label==None:
