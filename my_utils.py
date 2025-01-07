@@ -14,14 +14,14 @@ def chamfer_distance_torch(T1,T2):
     return torch.min(torch.cdist(T1,T2),dim=1)[0]
                                 
 def dilatation(image,device=None):
-    """dilate the "1" part of an 2d image"""
+    """dilate the "1" part of an 2d binary image"""
     kernel=torch.tensor([[1,1,1],[1,1,1],[1,1,1]],device=device).unsqueeze(0).unsqueeze(0).float()
     if device ==None:
         device=("cuda" if torch.cuda.is_available() else "cpu")
     return torch.where(torch.conv2d(image.unsqueeze(0).unsqueeze(0),kernel,padding=1)>=1,1,0).squeeze(0).squeeze(0)
 
 def dilatation_in_3d(image,device=None):
-    """3d dilatation for an 3d image """
+    """3d dilatation for an 3d binary image """
     image_type=image.dtype
     if device ==None:
         device=("cuda" if torch.cuda.is_available() else "cpu")
@@ -29,12 +29,15 @@ def dilatation_in_3d(image,device=None):
     return torch.where(TF.conv3d(image.unsqueeze(0).unsqueeze(0),kernel,padding=1)>=1,1,0).squeeze(0).squeeze(0)
 
 def get_probabilities(mask,ignore_labelmap,mode='3d'):
+    """mask is the error map, ignore_labelmap the binary map of pixels that are not labelized ignore"""
+
+    if ignore_labelmap.sum()!=0:
+       mask=mask*ignore_labelmap
+    #    contour=contour*ignore_labelmap
     if mode=='3d':
         contour=dilatation_in_3d(mask)-mask
     else:
         contour=dilatation(mask)-mask
-    if ignore_labelmap.sum()!=0:
-       contour=contour*ignore_labelmap
     dist=chamfer_distance_torch(torch.nonzero(mask==1).float(),torch.nonzero(contour==1).float())
     return torch.exp(dist)-1
 
@@ -493,7 +496,6 @@ def click_simulation_test(self,data,target,training_mode=True,click_mode='global
 
     click_mask= torch.full((b, c - 1,d, h, w), 0, device=self.device, dtype=torch.float)
 
-
     if np.random.binomial(n=1,p=self.nbr_supervised): #choosing if the batch is gonna be train with clicks or not   
         self.network.eval() #putting the model in inference mode, needed to simulate click 
         for k in range(self.max_iter):
@@ -507,7 +509,7 @@ def click_simulation_test(self,data,target,training_mode=True,click_mode='global
                     # probabilities = torch.softmax(logits[0],dim=1)
                     # prediction = torch.max(probabilities,dim=1)[1]
                     prediction = torch.max(logits[0],dim=1)[1]
-                for nimage in range(b):       
+                for nimage in range(b):      
                         click, chosen_label=select_pixel_3d(groundtruth[nimage,0],prediction[nimage],mode=click_mode,ignore_label=self.label_manager.ignore_label)
                         if click==None:
                             print('no error big enough,skiping image{}'.format(nimage))
