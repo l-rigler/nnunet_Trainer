@@ -30,14 +30,15 @@ def dilatation_in_3d(image,device=None):
 
 def get_probabilities(mask,ignore_labelmap,mode='3d'):
     """mask is the error map, ignore_labelmap the binary map of pixels that are not labelized ignore"""
-
-    if ignore_labelmap.sum()!=0:
-       mask=mask*ignore_labelmap
-    #    contour=contour*ignore_labelmap
+    breakpoint()
     if mode=='3d':
         contour=dilatation_in_3d(mask)-mask
     else:
         contour=dilatation(mask)-mask
+    if ignore_labelmap.sum()!=0:
+       mask=mask*ignore_labelmap
+       contour=contour*ignore_labelmap
+
     dist=chamfer_distance_torch(torch.nonzero(mask==1).float(),torch.nonzero(contour==1).float())
     return torch.exp(dist)-1
 
@@ -444,6 +445,7 @@ def choose_label(gt,seg,click_rule='proportional'):
 def global_rule_selection(gt,seg,ignore_label=None):
     """3d rule based on the error size to choose the pixel"""
     errors=(gt!=seg).float()
+    breakpoint()
     if ignore_label is not None :
         ignore_mask=gt!=ignore_label 
     else:
@@ -462,8 +464,8 @@ def global_rule_selection(gt,seg,ignore_label=None):
 
 
 def select_pixel_3d(gt,seg,mode='global',ignore_label=None):
-    """function that given a prediction and its associate groundtruth choose a pixel for guidande with respect to a precised rule (max, proportionnal or global)
-    gt and seg should have the same dimension (d,h,w)"""
+    """function that given a prediction and its associate groundtruth choose a pixel for guidance with respect to a specified rule (max, proportionnal or global)
+    gt and seg should have the same dimension (*,d,h,w)"""
     if mode == 'global':
         return global_rule_selection(gt,seg,ignore_label)
     else:
@@ -472,7 +474,7 @@ def select_pixel_3d(gt,seg,mode='global',ignore_label=None):
                             print('no error on this image ')
                             return None,None
         error_mask=gt!=seg
-        label_mask=gt==chosen_label
+        label_mask=gt==chosen_label #ignore label mask 
         errors=error_mask*label_mask
         proba_click=get_probabilities(errors.float())
         proba_with_treshold=torch.where(proba_click>2,proba_click,0)
