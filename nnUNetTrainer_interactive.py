@@ -3,6 +3,9 @@ import torch
 import torchvision.transforms.functional as F
 import nnunetv2.training.nnUNetTrainer.nnUNetTrainer as nnUNetTrainer
 from nnunetv2.utilities.helpers import dummy_context
+
+from batchgeneratorsv2.transforms.utils.deep_supervision_downsampling import DownsampleSegForDSTransform
+
 # from . import Hook
 from . import my_utils as Mutils
 import matplotlib.pyplot as plt          
@@ -172,14 +175,13 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
                 # we don't use the lowest 2 outputs. Normalize weights so that they sum to 1
                 weights = weights / weights.sum()
                 # now wrap the loss
-                loss = Mutils.DeepSupervisionWrapper(loss, weights)
+                loss = Mutils.DeepSupervisionWrapper(loss,deep_supervision_scales,weights)
         return loss
 
     def add_guidance(self,data,target,training_mode=True,mode='global'):
         return Mutils.click_simulation_test(self,data,target,training_mode,click_mode=mode)
     
     def train_step(self, batch: dict) -> dict:
-
         data = batch["data"]
         target = batch["target"]
         data = data.to(self.device, non_blocking=True)
@@ -187,7 +189,7 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
             target = [i.to(self.device, non_blocking=True) for i in target]
         else:
             target = target.to(self.device, non_blocking=True)
-        if self.current_epoch> 3 :
+        if self.current_epoch> 0 :
             with torch.no_grad():
                 # data=self.add_guidance(data,target,'global')
                 data[:,1:]=data[:,1:]*0
@@ -206,7 +208,7 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
             else dummy_context()
         ):
             output = self.network(data)
-            if self.current_epoch> 3 :
+            if self.current_epoch> 0 :
                 self.loss.click_map=torch.sum(torch.where(click_map>0,1,0),axis=1)
                 # self.loss.loss.alpha=1-(self.current_epoch/self.num_epochs)
                 self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.num_epochs))
@@ -239,7 +241,7 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
             data[:,1:]=data[:,1:]*0
             net_output0=self.network(data)
             self.loss.net_output0=net_output0
-            if self.current_epoch > 3 : 
+            if self.current_epoch > 0 : 
                 data,click_map=self.add_guidance(data,target,training_mode=False)
                 self.loss.click_map=torch.sum(torch.where(click_map>0,1,0),axis=1)
                 # self.loss.loss.alpha=1-(self.current_epoch/self.num_epochs)

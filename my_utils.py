@@ -8,6 +8,7 @@ import pandas as pd
 from nnunetv2.training.loss.robust_ce_loss import RobustCrossEntropyLoss
 from nnunetv2.training.loss.compound_losses import DC_and_CE_loss
 from nnunetv2.training.loss.dice import SoftDiceLoss
+from batchgeneratorsv2.transforms.utils.deep_supervision_downsampling import DownsampleSegForDSTransform
 
 def chamfer_distance_torch(T1,T2):
     """return the tensor containing the distance of from T2 of each point of T1 """
@@ -30,13 +31,13 @@ def dilatation_in_3d(image,device=None):
 
 def get_probabilities(mask,ignore_labelmap,mode='3d'):
     """mask is the error map, ignore_labelmap the binary map of pixels that are not labelized ignore"""
-    breakpoint()
+    if ignore_labelmap.sum()!=0:
+        mask=mask*ignore_labelmap
     if mode=='3d':
         contour=dilatation_in_3d(mask)-mask
     else:
         contour=dilatation(mask)-mask
     if ignore_labelmap.sum()!=0:
-       mask=mask*ignore_labelmap
        contour=contour*ignore_labelmap
 
     dist=chamfer_distance_torch(torch.nonzero(mask==1).float(),torch.nonzero(contour==1).float())
@@ -445,9 +446,9 @@ def choose_label(gt,seg,click_rule='proportional'):
 def global_rule_selection(gt,seg,ignore_label=None):
     """3d rule based on the error size to choose the pixel"""
     errors=(gt!=seg).float()
-    breakpoint()
     if ignore_label is not None :
-        ignore_mask=gt!=ignore_label 
+        ignore_mask=gt!=ignore_label
+        errors=errors*ignore_mask 
     else:
         ignore_mask=torch.zeros(1,device=torch.device('cuda:0'))
     proba_click=get_probabilities(errors,ignore_mask)
@@ -460,6 +461,7 @@ def global_rule_selection(gt,seg,ignore_label=None):
         breakpoint()             
     click=torch.nonzero(errors)[random_pick].int().squeeze(0)
     chosen_label=gt[click[0],click[1],click[2]].int().item()
+
     return click,chosen_label
 
 
@@ -571,7 +573,7 @@ def local_tensor(T,pt,radius):
     elif len(T.shape)==4:
         x,y=pt
         return T[:,:,x-radius:x+radius,y-radius:y+radius]
-    
+
 class click_penalty_loss(New_loss):
 
     def __init__(self):
@@ -672,14 +674,18 @@ class loss_P0_and_click_region(DC_and_CE_loss):
             return super().forward(net_output,gt)
         if self.click_map.sum()==0:
             return super().forward(net_output,gt)
-        gt_masked=torch.where(self.click_map.unsqueeze(1)==1,gt,self.ignore_label)
+        try:
+            gt_masked=torch.where(self.click_map.unsqueeze(1)==1,gt,self.ignore_label)
+        except:
+            breakpoint()
+
         click_loss=super().forward(net_output,gt_masked)
         print('alpha:',self.alpha,'click_loss:',click_loss.item())
         return self.alpha*super().forward(self.net_output0,gt) + ((1-self.alpha)) * click_loss
     
 class DeepSupervisionWrapper(torch.nn.Module):
     """ wrapper to make a the deep supervision work with click penalty """
-    def __init__(self, loss, weight_factors=None):
+    def __init__(self, loss,scales, weight_factors=None):
         """
         Wraps a loss function so that it can be applied to multiple outputs. Forward accepts an arbitrary number of
         inputs. Each input is expected to be a tuple/list. Each tuple/list must have the same length. The loss is then
@@ -693,6 +699,7 @@ class DeepSupervisionWrapper(torch.nn.Module):
         self.loss = loss
         self.click_map=None
         self.net_output=[None]*len(weight_factors)
+        self.scales=scales
 
     def forward(self, *args):
         assert all([isinstance(i, (tuple, list)) for i in args]), \
@@ -710,9 +717,12 @@ class DeepSupervisionWrapper(torch.nn.Module):
             result=0
             for i, inputs in enumerate(zip(*args)):
                     if weights[i] != 0.0:
-                            self.loss.click_map=(TF.interpolate(self.click_map.float(),mode='nearest',scale_factor=1/(2**i))>0.5).float()
-                            self.loss.net_output0=self.net_output0[i]      
-                            result+=weights[i]*self.loss(*inputs)        
+                            new_shape=[round(i*j) for i,j in zip(self.click_map.shape[1:],self.scales[i])]
+                            breakpoint()
+                            self.loss.click_map = (TF.interpolate(self.click_map.float().unsqueeze(1),mode='nearest-exact',size=new_shape)>0.5).float().squeeze()
+                            self.loss.net_output0 = self.net_output0[i]
+                            result+=weights[i]*self.loss(*inputs)
+
             return result
         
 if __name__=='__main__':
