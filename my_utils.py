@@ -26,15 +26,14 @@ def from_flat_to_shaped_idx(flat_idx,original_shape):
 def scipy_get_one_click(gt,seg,ignore_label=None):
     """ computin chamfer distance via scipy fct then return a click and its associated label"""
     errors=(gt!=seg).float()
-    breakpoint()
+    chamfer_distance=torch.tensor(distance_transform_cdt(errors.cpu(),metric='taxicab'),device=(torch.device('cuda:0')))
     if ignore_label is not None :
         ignore_mask=gt!=ignore_label
     if ignore_mask.sum()!=0:
-        errors=errors*ignore_mask
-    chamfer_distance=torch.tensor(distance_transform_cdt(errors.cpu(),metric='taxicab'),device=(torch.device('cuda:0')))
+        chamfer_distance=chamfer_distance*ignore_mask
     proba=torch.exp(chamfer_distance)-1
     proba_with_treshold=torch.where(proba>2,proba,0)
-    breakpoint()    
+    # breakpoint()    
     if proba_with_treshold.sum()==0:
         return None,None
     try:
