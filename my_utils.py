@@ -9,10 +9,44 @@ from nnunetv2.training.loss.robust_ce_loss import RobustCrossEntropyLoss
 from nnunetv2.training.loss.compound_losses import DC_and_CE_loss
 from nnunetv2.training.loss.dice import SoftDiceLoss
 from batchgeneratorsv2.transforms.utils.deep_supervision_downsampling import DownsampleSegForDSTransform
+from scipy.ndimage import distance_transform_cdt
 
 def chamfer_distance_torch(T1,T2):
     """return the tensor containing the distance of from T2 of each point of T1 """
     return torch.min(torch.cdist(T1,T2),dim=1)[0]
+
+def from_flat_to_shaped_idx(flat_idx,original_shape):
+    D,H,W=original_shape
+    d_idx=flat_idx // (H*W)
+    rest=flat_idx % (H*W)
+    h_idx=rest // W
+    w_idx=rest % W
+    return torch.tensor([d_idx,h_idx,w_idx])
+
+def scipy_get_one_click(gt,seg,ignore_label=None):
+    """ computin chamfer distance via scipy fct then return a click and its associated label"""
+    errors=(gt!=seg).float()
+    breakpoint()
+    if ignore_label is not None :
+        ignore_mask=gt!=ignore_label
+    if ignore_mask.sum()!=0:
+        errors=errors*ignore_mask
+    chamfer_distance=torch.tensor(distance_transform_cdt(errors.cpu(),metric='taxicab'),device=(torch.device('cuda:0')))
+    proba=torch.exp(chamfer_distance)-1
+    proba_with_treshold=torch.where(proba>2,proba,0)
+    breakpoint()    
+    if proba_with_treshold.sum()==0:
+        return None,None
+    try:
+        random_pick = torch.multinomial(proba_with_treshold.flatten(),1,replacement=True) #normalisation is done by the torch function
+    except:
+        breakpoint()
+             
+    click=from_flat_to_shaped_idx(random_pick,proba_with_treshold.shape)
+    chosen_label=gt[click[0],click[1],click[2]].int().item()
+
+    return click,chosen_label
+
                                 
 def dilatation(image,device=None):
     """dilate the "1" part of an 2d binary image"""
@@ -469,7 +503,8 @@ def select_pixel_3d(gt,seg,mode='global',ignore_label=None):
     """function that given a prediction and its associate groundtruth choose a pixel for guidance with respect to a specified rule (max, proportionnal or global)
     gt and seg should have the same dimension (*,d,h,w)"""
     if mode == 'global':
-        return global_rule_selection(gt,seg,ignore_label)
+        # return global_rule_selection(gt,seg,ignore_label)
+        return scipy_get_one_click(gt,seg,ignore_label)
     else:
         chosen_label=choose_label(gt,seg,click_rule=mode)
         if chosen_label==None:
@@ -516,7 +551,7 @@ def click_simulation_test(self,data,target,training_mode=True,click_mode='global
                 for nimage in range(b):      
                         click, chosen_label=select_pixel_3d(groundtruth[nimage,0],prediction[nimage],mode=click_mode,ignore_label=self.label_manager.ignore_label)
                         if click==None:
-                            print('no error big enough,skiping image{}'.format(nimage))
+                            print('no error big enough,skiping image{} at step {}'.format(nimage,k))
                             continue
 
                         # add click to click map
@@ -718,7 +753,6 @@ class DeepSupervisionWrapper(torch.nn.Module):
             for i, inputs in enumerate(zip(*args)):
                     if weights[i] != 0.0:
                             new_shape=[round(i*j) for i,j in zip(self.click_map.shape[1:],self.scales[i])]
-                            breakpoint()
                             self.loss.click_map = (TF.interpolate(self.click_map.float().unsqueeze(1),mode='nearest-exact',size=new_shape)>0.5).float().squeeze()
                             self.loss.net_output0 = self.net_output0[i]
                             result+=weights[i]*self.loss(*inputs)
