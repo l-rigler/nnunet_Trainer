@@ -62,6 +62,35 @@ def dilatation_in_3d(image,device=None):
     kernel=torch.full((3,3,3),1,dtype=image_type,device=device).unsqueeze(0).unsqueeze(0)
     return torch.where(TF.conv3d(image.unsqueeze(0).unsqueeze(0),kernel,padding=1)>=1,1,0).squeeze(0).squeeze(0)
 
+def erosion_3d(image,ignore_map=None):
+    if ignore_map is None:
+        return 1-dilatation_in_3d(1-image)
+    else:
+        background=(1-image)*ignore_map
+        background_dilatation=dilatation_in_3d(background)
+        return (1-background_dilatation)*ignore_map
+    
+def chamfer_dist_morpho(image,ignore_map=None,iteration=7):
+    D={0:image}
+    results=torch.zeros(image.shape,device=image.device)
+    for k in range(0,iteration):
+        D[k+1]=erosion_3d(D[k],ignore_map)
+        results+=D[k+1]
+    return results
+
+def get_one_click_morpho(gt,seg,ignore_label=None):
+    errors = (gt!=seg).float()
+    if ignore_label is not None:
+        is_ignored = torch.any(gt==9,axis=[1,2])
+        is_seg = 1 - (is_ignored.int().unsqueeze(1).unsqueeze(1))
+    chamfer_mask = chamfer_dist_morpho(errors,is_seg)
+    proba = torch.exp(chamfer_mask)-1
+    proba_with_treshold=torch.where(proba>1,proba,0)
+    click=torch.multinomial(proba_with_treshold.flatten(),1,replacement=True)
+    click=from_flat_to_shaped_idx(click)
+    chosen_label=gt[click[0],click[1],click[2]].int().item()
+    return click, chosen_label
+
 def get_probabilities(mask,ignore_labelmap,mode='3d'):
     """mask is the error map, ignore_labelmap the binary map of pixels that are not labelized ignore"""
     if ignore_labelmap.sum()!=0:
@@ -70,6 +99,7 @@ def get_probabilities(mask,ignore_labelmap,mode='3d'):
         contour=dilatation_in_3d(mask)-mask
     else:
         contour=dilatation(mask)-mask
+
     if ignore_labelmap.sum()!=0:
        contour=contour*ignore_labelmap
 
@@ -478,6 +508,7 @@ def choose_label(gt,seg,click_rule='proportional'):
 
 def global_rule_selection(gt,seg,ignore_label=None):
     """3d rule based on the error size to choose the pixel"""
+    breakpoint()
     errors=(gt!=seg).float()
     if ignore_label is not None :
         ignore_mask=gt!=ignore_label
