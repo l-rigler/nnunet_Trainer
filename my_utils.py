@@ -3,6 +3,7 @@ import numpy as np
 import torchvision.transforms.functional as F
 import torch.nn.functional as TF
 import pandas as pd 
+import time
 # from . import metrics_base as MB
 
 from nnunetv2.training.loss.robust_ce_loss import RobustCrossEntropyLoss
@@ -24,7 +25,7 @@ def from_flat_to_shaped_idx(flat_idx,original_shape):
     return torch.tensor([d_idx,h_idx,w_idx])
 
 def scipy_get_one_click(gt,seg,ignore_label=None):
-    """ computin chamfer distance via scipy fct then return a click and its associated label"""
+    """ compute chamfer distance via scipy fct then return a click and its associated label"""
     errors=(gt!=seg).float()
     chamfer_distance=torch.tensor(distance_transform_cdt(errors.cpu(),metric='taxicab'),device=(torch.device('cuda:0')))
     if ignore_label is not None :
@@ -32,8 +33,7 @@ def scipy_get_one_click(gt,seg,ignore_label=None):
     if ignore_mask.sum()!=0:
         chamfer_distance=chamfer_distance*ignore_mask
     proba=torch.exp(chamfer_distance)-1
-    proba_with_treshold=torch.where(proba>2,proba,0)
-    # breakpoint()    
+    proba_with_treshold=torch.where(proba>2,proba,0)    
     if proba_with_treshold.sum()==0:
         return None,None
     try:
@@ -56,6 +56,7 @@ def dilatation(image,device=None):
 
 def dilatation_in_3d(image,device=None):
     """3d dilatation for an 3d binary image """
+    image=image.float()
     image_type=image.dtype
     if device ==None:
         device=("cuda" if torch.cuda.is_available() else "cpu")
@@ -70,26 +71,30 @@ def erosion_3d(image,ignore_map=None):
         background_dilatation=dilatation_in_3d(background)
         return (1-background_dilatation)*ignore_map
     
-def chamfer_dist_morpho(image,ignore_map=None,iteration=7):
+def chamfer_dist_morpho(image,ignore_map=None,iteration=20):
     D={0:image}
     results=torch.zeros(image.shape,device=image.device)
     for k in range(0,iteration):
         D[k+1]=erosion_3d(D[k],ignore_map)
+        if D[k+1].sum()==0:
+            return results
         results+=D[k+1]
     return results
 
 def get_one_click_morpho(gt,seg,ignore_label=None):
     errors = (gt!=seg).float()
     if ignore_label is not None:
-        is_ignored = torch.any(gt==9,axis=[1,2])
+        is_ignored = torch.any(gt==ignore_label,axis=[1,2])
         is_seg = 1 - (is_ignored.int().unsqueeze(1).unsqueeze(1))
-    chamfer_mask = chamfer_dist_morpho(errors,is_seg)
-    proba = torch.exp(chamfer_mask)-1
-    proba_with_treshold=torch.where(proba>1,proba,0)
-    click=torch.multinomial(proba_with_treshold.flatten(),1,replacement=True)
-    click=from_flat_to_shaped_idx(click)
-    chosen_label=gt[click[0],click[1],click[2]].int().item()
-    return click, chosen_label
+    with torch.cuda.amp.autocast():
+        chamfer_mask = chamfer_dist_morpho(errors,is_seg)
+        proba = torch.exp(chamfer_mask)-1
+        if torch.amax(proba) > 0:
+            click = torch.multinomial(proba.flatten(),1,replacement=True)
+            click = from_flat_to_shaped_idx(click,proba.shape)
+            chosen_label = gt[click[0],click[1],click[2]].int().item()
+            return click, chosen_label
+        return None,None
 
 def get_probabilities(mask,ignore_labelmap,mode='3d'):
     """mask is the error map, ignore_labelmap the binary map of pixels that are not labelized ignore"""
@@ -508,7 +513,6 @@ def choose_label(gt,seg,click_rule='proportional'):
 
 def global_rule_selection(gt,seg,ignore_label=None):
     """3d rule based on the error size to choose the pixel"""
-    breakpoint()
     errors=(gt!=seg).float()
     if ignore_label is not None :
         ignore_mask=gt!=ignore_label
@@ -534,7 +538,9 @@ def select_pixel_3d(gt,seg,mode='global',ignore_label=None):
     gt and seg should have the same dimension (*,d,h,w)"""
     if mode == 'global':
         # return global_rule_selection(gt,seg,ignore_label)
-        return scipy_get_one_click(gt,seg,ignore_label)
+        # return scipy_get_one_click(gt,seg,ignore_label)
+        return get_one_click_morpho(gt,seg,ignore_label)
+    
     else:
         chosen_label=choose_label(gt,seg,click_rule=mode)
         if chosen_label==None:
@@ -561,25 +567,25 @@ def click_simulation_test(self,data,target,training_mode=True,click_mode='global
     training_mode : True if you use this function during training, False if it's during validation"""
     b,c,d,h,w= data.size()  # batch, channel, depth, height, width
     groundtruth=target[0]
-    #get the number of labels
-
     click_mask= torch.full((b, c - 1,d, h, w), 0, device=self.device, dtype=torch.float)
-
     if np.random.binomial(n=1,p=self.nbr_supervised): #choosing if the batch is gonna be train with clicks or not   
         self.network.eval() #putting the model in inference mode, needed to simulate click 
         for k in range(self.max_iter):
         #we first want to get map probabilities
             if do_simulate(k,self.max_iter,training_mode):
                 # using current network to have prediction & probabilities 
-                
                 with torch.no_grad():
                     data[:,1:]=apply_gaussian_bluring(click_mask,(1,2,2),5)
                     logits = self.network(data)
                     # probabilities = torch.softmax(logits[0],dim=1)
                     # prediction = torch.max(probabilities,dim=1)[1]
                     prediction = torch.max(logits[0],dim=1)[1]
-                for nimage in range(b):      
+                for nimage in range(b):
+                        start=time.time()
                         click, chosen_label=select_pixel_3d(groundtruth[nimage,0],prediction[nimage],mode=click_mode,ignore_label=self.label_manager.ignore_label)
+                        stop=time.time()
+                        print(f'checkpoint 4 : {stop-start} s')
+                        # breakpoint()
                         if click==None:
                             print('no error big enough,skiping image{} at step {}'.format(nimage,k))
                             continue
@@ -678,7 +684,6 @@ class test_loss(DC_and_CE_loss):
         self.ds_iterator=0
 
     def forward(self,net_output,gt):
-        #variable to build : click_map, radius, alpha
         if self.click_map==None:
             return super().forward(net_output,gt)
         click_list=torch.nonzero(self.click_map)
@@ -732,19 +737,19 @@ class loss_P0_and_click_region(DC_and_CE_loss):
         self.click_map=None
         self.alpha=1
         self.net_output0=None
-
+        
     def forward(self,net_output,gt):
         #variable to build : click_map, radius, alpha)
         if self.click_map==None:
             return super().forward(net_output,gt)
         if self.click_map.sum()==0:
             return super().forward(net_output,gt)
-        try:
-            gt_masked=torch.where(self.click_map.unsqueeze(1)==1,gt,self.ignore_label)
-        except:
-            breakpoint()
-
-        click_loss=super().forward(net_output,gt_masked)
+        if self.ignore_label is not None:
+            is_ignored = torch.any(gt.squeeze() == self.ignore_label,axis=[2,3])
+            is_seg = 1 - (is_ignored.int().unsqueeze(2).unsqueeze(2))
+            self.click_map = self.click_map * is_seg
+        gt_masked = torch.where(self.click_map.unsqueeze(1) == 1,gt,self.ignore_label)         
+        click_loss = super().forward(net_output,gt_masked)
         print('alpha:',self.alpha,'click_loss:',click_loss.item())
         return self.alpha*super().forward(self.net_output0,gt) + ((1-self.alpha)) * click_loss
     

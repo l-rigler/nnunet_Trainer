@@ -196,7 +196,6 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
                 net_output0=self.network(data)
                 self.loss.net_output0=net_output0
                 data,click_map=self.add_guidance(data,target,'global')
-        
         self.optimizer.zero_grad(set_to_none=True)
         # Autocast can be annoying
         # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.
