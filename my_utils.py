@@ -7,8 +7,8 @@ import time
 # from . import metrics_base as MB
 
 from nnunetv2.training.loss.robust_ce_loss import RobustCrossEntropyLoss
-from nnunetv2.training.loss.compound_losses import DC_and_CE_loss
-from nnunetv2.training.loss.dice import SoftDiceLoss
+from nnunetv2.training.loss.compound_losses import DC_and_CE_loss, DC_and_BCE_loss
+from nnunetv2.training.loss.dice import SoftDiceLoss, MemoryEfficientSoftDiceLoss
 from batchgeneratorsv2.transforms.utils.deep_supervision_downsampling import DownsampleSegForDSTransform
 from scipy.ndimage import distance_transform_cdt
 
@@ -93,6 +93,8 @@ def get_one_click_morpho(gt,seg,ignore_label=None):
             click = torch.multinomial(proba.flatten(),1,replacement=True)
             click = from_flat_to_shaped_idx(click,proba.shape)
             chosen_label = gt[click[0],click[1],click[2]].int().item()
+            # screenshot_morpho_chamf2(gt,seg,chamfer_mask,errors,click,chosen_label)
+            # breakpoint()
             return click, chosen_label
         return None,None
 
@@ -568,7 +570,7 @@ def click_simulation_test(self,data,target,training_mode=True,click_mode='global
     b,c,d,h,w= data.size()  # batch, channel, depth, height, width
     groundtruth=target[0]
     click_mask= torch.full((b, c - 1,d, h, w), 0, device=self.device, dtype=torch.float)
-    if np.random.binomial(n=1,p=self.nbr_supervised): #choosing if the batch is gonna be train with clicks or not   
+    if np.random.binomial(n=1,p=self.nbr_supervised): #choosing if the batch is gonna be train with clicks or not 
         self.network.eval() #putting the model in inference mode, needed to simulate click 
         for k in range(self.max_iter):
         #we first want to get map probabilities
@@ -591,14 +593,21 @@ def click_simulation_test(self,data,target,training_mode=True,click_mode='global
                             continue
 
                         # add click to click map
-                        click_mask[nimage,chosen_label,click[0],click[1],click[2]] = 1                                                     
+                        click_mask[nimage,chosen_label,click[0],click[1],click[2]] = 1
+                        # screenshot_click_gen(groundtruth,prediction,click,chosen_label,nimage)
+                        # breakpoint()                                                     
             else:
                 break
+        
         # here we smoothed the click data
         data[:,1:]=apply_gaussian_bluring(click_mask,2,5)
+        # torch.save(data,'data.pt')
+        # torch.save(groundtruth,'gt.pt')
         if training_mode:
             self.network.train() #putting the model back to training mode 
             print('all click generated!, starting gradient descent...')
+    else: 
+        print('no click for this batch !')
     return data,data[:,1:]
 
 
@@ -732,26 +741,33 @@ class loss_P0_and_click_region(DC_and_CE_loss):
     click map is a heat map with gaussian bluring """
     def __init__(self, soft_dice_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, ignore_label=None,
                     dice_class=SoftDiceLoss):
+        
         super().__init__(soft_dice_kwargs, ce_kwargs, weight_ce, weight_dice, ignore_label,
                     dice_class)
+        
         self.click_map=None
         self.alpha=1
         self.net_output0=None
-        
+
     def forward(self,net_output,gt):
-        #variable to build : click_map, radius, alpha)
-        if self.click_map==None:
-            return super().forward(net_output,gt)
-        if self.click_map.sum()==0:
+        
+        if self.click_map==None or self.click_map.sum() == 0:
             return super().forward(net_output,gt)
         if self.ignore_label is not None:
             is_ignored = torch.any(gt.squeeze() == self.ignore_label,axis=[2,3])
             is_seg = 1 - (is_ignored.int().unsqueeze(2).unsqueeze(2))
             self.click_map = self.click_map * is_seg
-        gt_masked = torch.where(self.click_map.unsqueeze(1) == 1,gt,self.ignore_label)         
+        gt_masked = torch.where(self.click_map.unsqueeze(1) > 0,gt,self.ignore_label) # we only consider area where clicks have effect 
+        # screenshot_loss(gt,gt_masked,self.click_map,is_seg)
+        # breakpoint()         
         click_loss = super().forward(net_output,gt_masked)
-        print('alpha:',self.alpha,'click_loss:',click_loss.item())
-        return self.alpha*super().forward(self.net_output0,gt) + ((1-self.alpha)) * click_loss
+        # AA=compute_dice(net_output,gt_masked,self.ignore_label)
+        # print(f'nnunet loss : {click_loss}')
+        # print(f'my loss : {AA}')
+        # print(f'vanilla loss -> nnunet : {super().forward(self.net_output0,gt)}, mine : {compute_dice(self.net_output0,gt,self.ignore_label)})')
+        # print('alpha:',self.alpha,'click_loss:',click_loss.item())
+        # breakpoint()
+        return self.alpha * super().forward(self.net_output0,gt) + ((1-self.alpha)) * click_loss
     
 class DeepSupervisionWrapper(torch.nn.Module):
     """ wrapper to make a the deep supervision work with click penalty """
@@ -793,7 +809,184 @@ class DeepSupervisionWrapper(torch.nn.Module):
                             result+=weights[i]*self.loss(*inputs)
 
             return result
-        
+
+import matplotlib.pyplot as plt 
+
+def screenshot_click_gen(gt,seg,click,label,nimage):
+    z,y,x=click.cpu()
+    gt=gt.squeeze().cpu()
+    seg=seg.cpu()
+    fig,ax = plt.subplots(1,4)
+    ax[0].imshow(gt[nimage,z])
+    ax[0].scatter(x,y,color='r',s=2,label=f'{label}')
+    ax[0].title.set_text('groundtruth')
+    ax[0].legend()
+    ax[1].imshow(seg[nimage,z])
+    ax[1].scatter(x,y,color='r',s=2,label=f'{label}')
+    ax[1].title.set_text('segmentation')
+    ax[1].legend()
+    ax[2].imshow(gt[nimage,z]==label)
+    ax[2].title.set_text('gt clicked label')
+    ax[2].scatter(x,y,color='r',s=2,label=f'{label}')
+    ax[3].imshow(gt[nimage,z]!=seg[nimage,z])
+    ax[3].scatter(x,y,color='r',s=2,label=f'{label}')
+    ax[3].title.set_text('errors')
+    fig.savefig(r'/mnt/rmn_files/0_Wip/New/1_Methodological_Developments/4_Methodologie_Traitement_Image/#8_2022_Re-Segmentation/legs/3d_model_I_fullstack_P0C_alphaexp/fig.png')        
+    plt.close(fig)
+
+def screenshot_loss(gt,gt_masked,click_map,is_seg,net_output):
+    gt=gt.squeeze().cpu()
+    Nz=gt.shape[1]
+    gt_masked=gt_masked.squeeze().cpu()
+    is_seg=is_seg.cpu()
+    click_map=click_map.cpu()
+    for nimage in range(2):
+        fig,ax=plt.subplots(Nz,4,figsize=(Nz//4,Nz*2))
+        for k in range(Nz):
+            ax[k,0].imshow(gt[nimage,k],vmin=0, vmax=9)
+            ax[k,1].imshow(is_seg[nimage,k],vmin=0, vmax=1)
+            ax[k,2].imshow(gt_masked[nimage,k],vmin=0, vmax=9)
+            ax[k,3].imshow(click_map[nimage,k],vmin=0, vmax=1)
+            
+            # Supprime les axes
+            for j in range(4):
+                ax[k, j].axis("off")
+
+        ax[0,0].set_title('gt',fontsize=12)
+        ax[0,1].set_title('is_seg',fontsize=12)
+        ax[0,2].set_title('gt_masked',fontsize=12)
+        ax[0,3].set_title('click_map',fontsize=12)
+        plt.tight_layout()
+        fig.savefig(f'/mnt/rmn_files/0_Wip/New/1_Methodological_Developments/4_Methodologie_Traitement_Image/#8_2022_Re-Segmentation/legs/3d_model_I_fullstack_P0C_alphaexp/fig_image_{nimage}.png',
+                    dpi=300,bbox_inches='tight')        
+        plt.close(fig)
+
+def screenshot_morpho_chamf(gt,pred,chamf,errors,click,chosen_label):
+    nbr_z=48
+    z,y,x=click.cpu()
+    gt=gt.squeeze().cpu()
+    pred=pred.cpu()
+    errors= errors.cpu()
+    chamf = chamf.cpu()
+    fig,ax = plt.subplots(nbr_z,4,figsize = (4,nbr_z))
+    for k in range(nbr_z):
+        ax[k,0].imshow(gt[k])
+        ax[k,1].imshow(pred[k])
+        ax[k,2].imshow(errors[k])
+        ax[k,3].imshow(chamf[k])
+        for j in range(4):
+                ax[k, j].axis("off")
+    ax[0,0].set_title('gt',fontsize=12)
+    ax[0,1].set_title('pred',fontsize=12)
+    ax[0,2].set_title('errors',fontsize=12)
+    ax[0,3].set_title('distance map',fontsize=12)
+    ax[z,2].scatter(x,y,color='r',s=1)
+    fig.savefig(f'/mnt/rmn_files/0_Wip/New/1_Methodological_Developments/4_Methodologie_Traitement_Image/#8_2022_Re-Segmentation/legs/3d_model_I_fullstack_P0C_alphaexp/fig_clicks.png',
+                    dpi=300,bbox_inches='tight')        
+    plt.close(fig)
+
+def screenshot_morpho_chamf2(gt,pred,chamf,errors,click,chosen_label):
+    nbr_z=1
+    z,y,x=click.cpu()
+    gt=gt.squeeze().cpu()
+    pred=pred.cpu()
+    errors= errors.cpu()
+    chamf = chamf.cpu()
+    fig,ax = plt.subplots(nbr_z,4,figsize = (4,nbr_z))
+    for k in range(nbr_z):
+        ax[0].imshow(gt[z])
+        ax[1].imshow(pred[z])
+        ax[2].imshow(errors[z])
+        ax[3].imshow(chamf[z])
+    ax[0].set_title('gt',fontsize=12)
+    ax[1].set_title('pred',fontsize=12)
+    ax[2].set_title('errors',fontsize=12)
+    ax[3].set_title('distance map',fontsize=12)
+    ax[2].scatter(x,y,color='r',s=1/4)
+    for j in range(4):
+                ax[j].axis("off")
+    plt.tight_layout()
+    fig.savefig(f'/mnt/rmn_files/0_Wip/New/1_Methodological_Developments/4_Methodologie_Traitement_Image/#8_2022_Re-Segmentation/legs/3d_model_I_fullstack_P0C_alphaexp/fig_clicks.png',
+                    dpi=300,bbox_inches='tight')        
+    plt.close(fig)
+
+def screenshot_click_chan(data,gt,seg_0,seg_f):
+    """data -> tensor of inputs,
+    seg_0 -> logits of 0 clic seg,
+    seg_f -> logits of final inference"""
+    GT = gt[0].squeeze().cpu()
+    pred_0 = torch.max(seg_0[0],dim=1)[1].cpu()
+    pred_f = torch.max(seg_f[0],dim=1)[1].cpu()
+    D = data.cpu()
+    click_chan = D[:,1:]
+    for nimage in range(2):
+        click_info = click_chan[nimage].nonzero()
+        if click_info.numel() == 0 : 
+            continue
+        label_info = click_info[:,0].unsqueeze(1)
+        slice_info = click_info[:,1].unsqueeze(1)
+        global_info = torch.cat((label_info,slice_info),dim=1)
+        global_info = global_info.unique(dim=0)
+        n = global_info.shape[0]
+        fig,ax = plt.subplots(n,4,figsize = (10,2*n))
+        for i in range(n):
+            label,z= global_info[i]
+            points = click_info[(click_info[:,1]==z) & (click_info[:,0]==label)]
+            ax[i,0].imshow(D[nimage,label+1,z])
+            ax[i,0].text(0.5,0.5, f'label {label}\nslice {z}', bbox={'facecolor': 'white', 'pad': 10})
+            ax[i,1].imshow(pred_0[nimage,z])
+            ax[i,1].set_title('prediction without click')
+            ax[i,1].scatter(points[:,3],points[:,2],color='r',s=0.25)
+            ax[i,2].imshow(pred_f[nimage,z])
+            ax[i,2].set_title('final prediction')
+            ax[i,3].imshow(GT[nimage,z],vmin=0,vmax=torch.max(GT[nimage,z]))
+            ax[i,3].set_title('groundtruth')
+            for j in range(3):
+                ax[i,j].axis('off')
+        plt.tight_layout()
+        fig.savefig(f'/mnt/rmn_files/0_Wip/New/1_Methodological_Developments/4_Methodologie_Traitement_Image/#8_2022_Re-Segmentation/legs/3d_model_I_fullstack_P0C_alphaexp/click_chan_image{nimage}.png',
+                        dpi=300,bbox_inches='tight')        
+        plt.close(fig)
+
+def screenshot_segmentation(gt,seg_0,seg_f):
+    GT = gt[0].squeeze().cpu()
+    pred_0 = torch.max(seg_0[0],dim=1)[1].cpu()
+    pred_f = torch.max(seg_f[0],dim=1)[1].cpu()
+    z_range=GT.shape[1]
+    for nimage in range(2):
+        fig,ax = plt.subplots(z_range,3,figsize=(8,z_range*2))
+        for k in range(z_range):
+            ax[k,0].imshow(GT[nimage,k])
+            ax[k,0].set_title('GT')
+            ax[k,1].imshow(pred_0[nimage,k])
+            ax[k,1].set_title(' pred no click')
+            ax[k,2].imshow(pred_f[nimage,k])
+            ax[k,2].set_title('final pred')
+            for j in range(3):
+                ax[k,j].axis('off')
+        plt.tight_layout()
+        fig.savefig(f'/mnt/rmn_files/0_Wip/New/1_Methodological_Developments/4_Methodologie_Traitement_Image/#8_2022_Re-Segmentation/legs/3d_model_I_fullstack_P0C_alphaexp/seg_analysis_{nimage}.png',
+                        dpi=300,bbox_inches='tight')        
+        plt.close(fig)
+
+def compute_dice(net_output,gt,ignore_label=None,smooth=10e-8):
+    if ignore_label is not None : 
+        ignore_mask= gt!=ignore_label
+        gt2=gt*ignore_mask
+    prediction = torch.max(net_output,dim=1)[1]
+    prediction = prediction*ignore_mask.squeeze()
+    pred_one_hot = TF.one_hot(prediction.long(),num_classes = 9 )
+    gt_one_hot = TF.one_hot(gt2.squeeze().long(),num_classes = 9 )
+    D={}
+    results=[]
+    for k in range(1,8):
+        numerator=(gt_one_hot[:,:,:,:,k]*pred_one_hot[:,:,:,:,k]).sum()+smooth
+        denominator=(gt_one_hot[:,:,:,:,k]).sum()+pred_one_hot[:,:,:,:,k].sum()+smooth*2
+        D[f'dice_on_label_{k}']=(2*numerator/denominator)
+        results.append(2*numerator.item() / denominator.item())
+
+    return np.array(results).mean()
+
 if __name__=='__main__':
     A=click_penalty_loss()
     click_mask=torch.randint(0,2,(2,9,5,5,3))

@@ -78,39 +78,39 @@ from nnunetv2.training.data_augmentation.custom_transforms.cascade_transforms im
 from nnunetv2.training.data_augmentation.custom_transforms.deep_supervision_donwsampling import (
     DownsampleSegForDSTransform2,
 )
-from nnunetv2.training.data_augmentation.custom_transforms.limited_length_multithreaded_augmenter import (
-    LimitedLenWrapper,
-)
-from nnunetv2.training.data_augmentation.custom_transforms.masking import MaskTransform
-from nnunetv2.training.data_augmentation.custom_transforms.region_based_training import (
-    ConvertSegmentationToRegionsTransform,
-)
-from nnunetv2.training.data_augmentation.custom_transforms.transforms_for_dummy_2d import (
-    Convert2DTo3DTransform,
-    Convert3DTo2DTransform,
-)
-from nnunetv2.training.dataloading.data_loader_2d import nnUNetDataLoader2D
-from nnunetv2.training.dataloading.data_loader_3d import nnUNetDataLoader3D
-from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDataset
-from nnunetv2.training.dataloading.utils import get_case_identifiers, unpack_dataset
-from nnunetv2.training.logging.nnunet_logger import nnUNetLogger
-from nnunetv2.training.loss.compound_losses import DC_and_CE_loss, DC_and_BCE_loss
-from nnunetv2.training.loss.deep_supervision import DeepSupervisionWrapper
+# from nnunetv2.training.data_augmentation.custom_transforms.limited_length_multithreaded_augmenter import (
+#     LimitedLenWrapper,
+# )
+# from nnunetv2.training.data_augmentation.custom_transforms.masking import MaskTransform
+# from nnunetv2.training.data_augmentation.custom_transforms.region_based_training import (
+#     ConvertSegmentationToRegionsTransform,
+# )
+# from nnunetv2.training.data_augmentation.custom_transforms.transforms_for_dummy_2d import (
+#     Convert2DTo3DTransform,
+#     Convert3DTo2DTransform,
+# )
+# from nnunetv2.training.dataloading.data_loader_2d import nnUNetDataLoader2D
+# from nnunetv2.training.dataloading.data_loader_3d import nnUNetDataLoader3D
+# from nnunetv2.training.dataloading.nnunet_dataset import nnUNetDataset
+# from nnunetv2.training.dataloading.utils import get_case_identifiers, unpack_dataset
+# from nnunetv2.training.logging.nnunet_logger import nnUNetLogger
+# from nnunetv2.training.loss.compound_losses import DC_and_CE_loss, DC_and_BCE_loss
+# from nnunetv2.training.loss.deep_supervision import DeepSupervisionWrapper
 from nnunetv2.training.loss.dice import get_tp_fp_fn_tn, MemoryEfficientSoftDiceLoss
-from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler
-from nnunetv2.utilities.collate_outputs import collate_outputs
-from nnunetv2.utilities.default_n_proc_DA import get_allowed_n_proc_DA
-from nnunetv2.utilities.file_path_utilities import check_workers_alive_and_busy
-from nnunetv2.utilities.get_network_from_plans import get_network_from_plans
-from nnunetv2.utilities.helpers import empty_cache, dummy_context
-from nnunetv2.utilities.label_handling.label_handling import (
-    convert_labelmap_to_one_hot,
-    determine_num_input_channels,
-)
-from nnunetv2.utilities.plans_handling.plans_handler import (
-    PlansManager,
-    ConfigurationManager,
-)
+# from nnunetv2.training.lr_scheduler.polylr import PolyLRScheduler
+# from nnunetv2.utilities.collate_outputs import collate_outputs
+# from nnunetv2.utilities.default_n_proc_DA import get_allowed_n_proc_DA
+# from nnunetv2.utilities.file_path_utilities import check_workers_alive_and_busy
+# from nnunetv2.utilities.get_network_from_plans import get_network_from_plans
+# from nnunetv2.utilities.helpers import empty_cache, dummy_context
+# from nnunetv2.utilities.label_handling.label_handling import (
+#     convert_labelmap_to_one_hot,
+#     determine_num_input_channels,
+# )
+# from nnunetv2.utilities.plans_handling.plans_handler import (
+#     PlansManager,
+#     ConfigurationManager,
+# )
 from sklearn.model_selection import KFold
 from torch import autocast, nn
 from torch import distributed as dist
@@ -128,7 +128,6 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
         configuration: str,
         fold: int,
         dataset_json: dict,
-        unpack_dataset: bool = True,
         device: torch.device = torch.device("cuda"),
         # max_iter=5,
         # nbr_supervised=0.5,
@@ -139,7 +138,6 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
             configuration,
             fold,
             dataset_json,
-            unpack_dataset,
             device,
         )
         self.max_iter = (
@@ -160,7 +158,7 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
         loss=Mutils.loss_P0_and_click_region({'batch_dice': self.configuration_manager.batch_dice,
                                    'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, {'ignore_index':self.label_manager.ignore_label}, weight_ce=1, weight_dice=1,
                                   ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
-        
+
         if self.enable_deep_supervision:
                 deep_supervision_scales = self._get_deep_supervision_scales()
                 weights = np.array([1 / (2 ** i) for i in range(len(deep_supervision_scales))])
@@ -182,6 +180,7 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
         return Mutils.click_simulation_test(self,data,target,training_mode,click_mode=mode)
     
     def train_step(self, batch: dict) -> dict:
+    
         data = batch["data"]
         target = batch["target"]
         data = data.to(self.device, non_blocking=True)
@@ -189,10 +188,9 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
             target = [i.to(self.device, non_blocking=True) for i in target]
         else:
             target = target.to(self.device, non_blocking=True)
+        data[:,1:]=data[:,1:]*0
         if self.current_epoch> 0 :
             with torch.no_grad():
-                # data=self.add_guidance(data,target,'global')
-                data[:,1:]=data[:,1:]*0
                 net_output0=self.network(data)
                 self.loss.net_output0=net_output0
                 data,click_map=self.add_guidance(data,target,'global')
@@ -201,28 +199,33 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
         # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
         # So autocast will only be active if we have a cuda device.
-        with (
-            torch.autocast(self.device.type, enabled=True)
-            if self.device.type == "cuda"
-            else dummy_context()
-        ):
-            output = self.network(data)
-            if self.current_epoch> 0 :
-                self.loss.click_map=torch.sum(torch.where(click_map>0,1,0),axis=1)
-                # self.loss.loss.alpha=1-(self.current_epoch/self.num_epochs)
-                self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.num_epochs))
-            l=self.loss(output,target)
-        if self.grad_scaler is not None:
-            self.grad_scaler.scale(l).backward()
-            self.grad_scaler.unscale_(self.optimizer)
-            torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
-            self.grad_scaler.step(self.optimizer)
-            self.grad_scaler.update()
-        else:
-            l.backward()
-            torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
-            self.optimizer.step()
-        return {"loss": l.detach().cpu().numpy()}
+        with torch.autograd.set_detect_anomaly(True) : # FOR DEBUGGING ONLY
+            with (
+                torch.autocast(self.device.type, enabled=True)
+                if self.device.type == "cuda"
+                else dummy_context()
+            ):
+                output = self.network(data)
+                # Mutils.screenshot_click_chan(data,target,net_output0,output)
+                # Mutils.screenshot_segmentation(target,net_output0,output)
+                # torch.save(data,r'/mnt/rmn_files/0_Wip/New/1_Methodological_Developments/4_Methodologie_Traitement_Image/#8_2022_Re-Segmentation/legs/3d_model_I_fullstack_P0C_alphaexp/input.pt')
+                # breakpoint()
+                if self.current_epoch> 0 :
+                    self.loss.click_map=torch.sum(torch.where(click_map>0,1,0),axis=1)
+                    # self.loss.loss.alpha=1-(self.current_epoch/self.num_epochs)
+                    self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.num_epochs))
+                l=self.loss(output,target)
+            if self.grad_scaler is not None:
+                self.grad_scaler.scale(l).backward()
+                self.grad_scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
+                self.grad_scaler.step(self.optimizer)
+                self.grad_scaler.update()
+            else:
+                l.backward()
+                torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
+                self.optimizer.step()
+            return {"loss": l.detach().cpu().numpy()}
 
 
 
