@@ -968,25 +968,7 @@ def screenshot_segmentation(gt,seg_0,seg_f):
         fig.savefig(f'/mnt/rmn_files/0_Wip/New/1_Methodological_Developments/4_Methodologie_Traitement_Image/#8_2022_Re-Segmentation/legs/3d_model_I_fullstack_P0C_alphaexp/seg_analysis_{nimage}.png',
                         dpi=300,bbox_inches='tight')        
         plt.close(fig)
-
-def compute_dice(net_output,gt,ignore_label=None,smooth=10e-8):
-    if ignore_label is not None : 
-        ignore_mask= gt!=ignore_label
-        gt2=gt*ignore_mask
-    prediction = torch.max(net_output,dim=1)[1]
-    prediction = prediction*ignore_mask.squeeze()
-    pred_one_hot = TF.one_hot(prediction.long(),num_classes = 9 )
-    gt_one_hot = TF.one_hot(gt2.squeeze().long(),num_classes = 9 )
-    D={}
-    results=[]
-    for k in range(1,8):
-        numerator=(gt_one_hot[:,:,:,:,k]*pred_one_hot[:,:,:,:,k]).sum()+smooth
-        denominator=(gt_one_hot[:,:,:,:,k]).sum()+pred_one_hot[:,:,:,:,k].sum()+smooth*2
-        D[f'dice_on_label_{k}']=(2*numerator/denominator)
-        results.append(2*numerator.item() / denominator.item())
-
-    return np.array(results).mean()
-
+        
 if __name__=='__main__':
     A=click_penalty_loss()
     click_mask=torch.randint(0,2,(2,9,5,5,3))
