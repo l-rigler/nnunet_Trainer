@@ -150,7 +150,8 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
         self.incr = 0
         self.epoch_incr = 0
         self.enable_deep_supervision = True
-        self.num_epochs = 600 #change this to change max number of epoch 
+        self.num_epochs = 800 #change this to change max number of epoch 
+        self.N_alpha = 800
 
     def _build_loss(self,):
         """function to define the loss of the model and to configure the deep supervision"""
@@ -206,14 +207,9 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
                 else dummy_context()
             ):
                 output = self.network(data)
-                # Mutils.screenshot_click_chan(data,target,net_output0,output)
-                # Mutils.screenshot_segmentation(target,net_output0,output)
-                # torch.save(data,r'/mnt/rmn_files/0_Wip/New/1_Methodological_Developments/4_Methodologie_Traitement_Image/#8_2022_Re-Segmentation/legs/3d_model_I_fullstack_P0C_alphaexp/input.pt')
-                # breakpoint()
                 if self.current_epoch> 0 :
                     self.loss.click_map=torch.sum(torch.where(click_map>0,1,0),axis=1)
-                    # self.loss.loss.alpha=1-(self.current_epoch/self.num_epochs)
-                    self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.num_epochs))
+                    self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.N_alpha))
                 l=self.loss(output,target)
             if self.grad_scaler is not None:
                 self.grad_scaler.scale(l).backward()
@@ -242,12 +238,11 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
         with torch.no_grad():
             data[:,1:]=data[:,1:]*0
             net_output0=self.network(data)
-            self.loss.net_output0=net_output0
+            self.loss.net_output0 = net_output0
             if self.current_epoch > 0 : 
                 data,click_map=self.add_guidance(data,target,training_mode=False)
-                self.loss.click_map=torch.sum(torch.where(click_map>0,1,0),axis=1)
-                # self.loss.loss.alpha=1-(self.current_epoch/self.num_epochs)
-                self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.num_epochs))
+                self.loss.click_map = torch.sum(torch.where(click_map>0,1,0),axis=1)
+                self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.N_alpha))
 
         # Autocast can be annoying
         # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.
