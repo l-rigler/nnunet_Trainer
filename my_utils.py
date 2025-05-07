@@ -93,8 +93,6 @@ def get_one_click_morpho(gt,seg,ignore_label=None):
             click = torch.multinomial(proba.flatten(),1,replacement=True)
             click = from_flat_to_shaped_idx(click,proba.shape)
             chosen_label = gt[click[0],click[1],click[2]].int().item()
-            # screenshot_morpho_chamf2(gt,seg,chamfer_mask,errors,click,chosen_label)
-            # breakpoint()
             return click, chosen_label
         return None,None
 
@@ -583,10 +581,7 @@ def click_simulation_test(self,data,target,training_mode=True,click_mode='global
                     # prediction = torch.max(probabilities,dim=1)[1]
                     prediction = torch.max(logits[0],dim=1)[1]
                 for nimage in range(b):
-                        start=time.time()
                         click, chosen_label=select_pixel_3d(groundtruth[nimage,0],prediction[nimage],mode=click_mode,ignore_label=self.label_manager.ignore_label)
-                        stop=time.time()
-                        print(f'checkpoint 4 : {stop-start} s')
                         # breakpoint()
                         if click==None:
                             print('no error big enough,skiping image{} at step {}'.format(nimage,k))
@@ -594,8 +589,13 @@ def click_simulation_test(self,data,target,training_mode=True,click_mode='global
 
                         # add click to click map
                         click_mask[nimage,chosen_label,click[0],click[1],click[2]] = 1
-                        # screenshot_click_gen(groundtruth,prediction,click,chosen_label,nimage)
-                        # breakpoint()                                                     
+
+                        #second click : 
+                        click, chosen_label=select_pixel_3d(groundtruth[nimage,0],prediction[nimage],mode=click_mode,ignore_label=self.label_manager.ignore_label)
+                        if click==None:
+                            print('no error big enough,skiping image{} at step {}'.format(nimage,k))
+                            continue
+                        click_mask[nimage,chosen_label,click[0],click[1],click[2]] = 1                                                    
             else:
                 break
         
