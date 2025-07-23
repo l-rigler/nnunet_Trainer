@@ -1,3 +1,4 @@
+""" based on interactive Trainer just made to test a new loss """
 import numpy as np
 import torch
 import torchvision.transforms.functional as F
@@ -24,6 +25,12 @@ from typing import Union, Tuple, List
 
 import numpy as np
 import torch
+
+# #doing this to import my script ... 
+# current_dir = os.path.dirname(os.path.abspath(__file__))
+# sys.path.insert(0, current_dir)
+from . import nnUNetTrainer_interactive
+
 from batchgenerators.dataloading.single_threaded_augmenter import (
     SingleThreadedAugmenter,
 )
@@ -119,7 +126,7 @@ from torch.cuda.amp import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 
-class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
+class Trainer_newloss(nnUNetTrainer_interactive.nnUNetTrainerinteractive):
     """custom nnUNet Trainer that train also for interactive segmentation and prediction refinement"""
 
     def __init__(
@@ -129,8 +136,6 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
         fold: int,
         dataset_json: dict,
         device: torch.device = torch.device("cuda"),
-        # max_iter=5,
-        # nbr_supervised=0.5,
     ):
         """Initialize the nnU-Net trainer for muscle segmentation."""
         super().__init__(
@@ -157,7 +162,7 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
     def _build_loss(self,):
         """function to define the loss of the model and to configure the deep supervision"""
 
-        loss=Mutils.loss_P0_and_click_region({'batch_dice': self.configuration_manager.batch_dice,
+        loss=Mutils.loss_P0_and_error_region({'batch_dice': self.configuration_manager.batch_dice,
                                    'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, {'ignore_index':self.label_manager.ignore_label}, weight_ce=1, weight_dice=1,
                                   ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
 
@@ -176,11 +181,9 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
                 weights = weights / weights.sum()
                 # now wrap the loss
                 loss = Mutils.DeepSupervisionWrapper(loss,deep_supervision_scales,weights)
+                loss.loss.alpha = 0.5
         return loss
 
-    def add_guidance(self,data,target,training_mode=True,mode='global'):
-        return Mutils.click_simulation_test(self,data,target,training_mode,click_mode=mode)
-    
     def train_step(self, batch: dict) -> dict:
     
         data = batch["data"]
@@ -210,7 +213,6 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
                 output = self.network(data)
                 if self.current_epoch> 0 :
                     self.loss.click_map = torch.sum(torch.where(click_map>0,1,0),axis=1)
-                    self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.N_alpha))
                 l=self.loss(output,target)
             if self.grad_scaler is not None:
                 self.grad_scaler.scale(l).backward()
@@ -243,7 +245,6 @@ class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
             if self.current_epoch > 0 : 
                 data,click_map=self.add_guidance(data,target,training_mode=False)
                 self.loss.click_map = torch.sum(torch.where(click_map>0,1,0),axis=1)
-                self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.N_alpha))
 
         # Autocast can be annoying
         # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.

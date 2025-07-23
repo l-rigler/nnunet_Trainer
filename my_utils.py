@@ -601,8 +601,6 @@ def click_simulation_test(self,data,target,training_mode=True,click_mode='global
         
         # here we smoothed the click data
         data[:,1:]=apply_gaussian_bluring(click_mask,2,5)
-        # torch.save(data,'data.pt')
-        # torch.save(groundtruth,'gt.pt')
         if training_mode:
             self.network.train() #putting the model back to training mode 
             print('all click generated!, starting gradient descent...')
@@ -741,7 +739,6 @@ class loss_P0_and_click_region(DC_and_CE_loss):
     click map is a heat map with gaussian bluring """
     def __init__(self, soft_dice_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, ignore_label=None,
                     dice_class=SoftDiceLoss):
-        
         super().__init__(soft_dice_kwargs, ce_kwargs, weight_ce, weight_dice, ignore_label,
                     dice_class)
         
@@ -757,17 +754,33 @@ class loss_P0_and_click_region(DC_and_CE_loss):
             is_ignored = torch.any(gt.squeeze() == self.ignore_label,axis=[2,3])
             is_seg = 1 - (is_ignored.int().unsqueeze(2).unsqueeze(2))
             self.click_map = self.click_map * is_seg
-        gt_masked = torch.where(self.click_map.unsqueeze(1) > 0,gt,self.ignore_label) # we only consider area where clicks have effect 
-        # screenshot_loss(gt,gt_masked,self.click_map,is_seg)
-        # breakpoint()         
+        gt_masked = torch.where(self.click_map.unsqueeze(1) > 0,gt,self.ignore_label) # we only consider area where clicks have effect        
         click_loss = super().forward(net_output,gt_masked)
-        # AA=compute_dice(net_output,gt_masked,self.ignore_label)
-        # print(f'nnunet loss : {click_loss}')
-        # print(f'my loss : {AA}')
-        # print(f'vanilla loss -> nnunet : {super().forward(self.net_output0,gt)}, mine : {compute_dice(self.net_output0,gt,self.ignore_label)})')
-        # print('alpha:',self.alpha,'click_loss:',click_loss.item())
-        # breakpoint()
         return self.alpha * super().forward(self.net_output0,gt) + ((1-self.alpha)) * click_loss
+    
+class loss_P0_and_error_region(DC_and_CE_loss):
+    """ loss with penalty on the entire error region"""
+
+    def __init__(self, soft_dice_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, ignore_label=None,
+                    dice_class=SoftDiceLoss):
+        super().__init__(soft_dice_kwargs, ce_kwargs, weight_ce, weight_dice, ignore_label,
+                    dice_class)
+        self.click_map=None
+        self.alpha=1
+        self.net_output0=None
+
+    def forward(self,net_output,gt):
+        if self.click_map==None or self.click_map.sum() == 0:
+            return super().forward(net_output,gt)
+        pred = torch.max(net_output,dim=1)[1]
+        error_map = (gt.squeeze() != pred)
+        if self.ignore_label is not None:
+            is_ignored = torch.any(gt.squeeze() == self.ignore_label,axis=[2,3])
+            is_seg = 1 - (is_ignored.int().unsqueeze(2).unsqueeze(2))
+            error_map = error_map * is_seg
+            gt_masked = torch.where(error_map.unsqueeze(1) > 0,gt,self.ignore_label) 
+            error_region_loss = super().forward(net_output,gt_masked)
+        return self.alpha * super().forward(self.net_output0,gt) + ((1-self.alpha)) * error_region_loss
     
 class DeepSupervisionWrapper(torch.nn.Module):
     """ wrapper to make a the deep supervision work with click penalty """
