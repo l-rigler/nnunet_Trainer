@@ -781,7 +781,35 @@ class loss_P0_and_error_region(DC_and_CE_loss):
             gt_masked = torch.where(error_map.unsqueeze(1) > 0,gt,self.ignore_label) 
             error_region_loss = super().forward(net_output,gt_masked)
         return self.alpha * super().forward(self.net_output0,gt) + ((1-self.alpha)) * error_region_loss
-    
+
+class loss_P0_and_click_label_region(DC_and_CE_loss):
+    """ loss with penalty on the label were clicks are provided
+    note : you need to import the list of all the label you click on during """
+
+    def __init__(self, soft_dice_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, ignore_label=None,
+                    dice_class=SoftDiceLoss):
+        super().__init__(soft_dice_kwargs, ce_kwargs, weight_ce, weight_dice, ignore_label,
+                    dice_class)
+        self.click_map=None
+        self.alpha=1
+        self.net_output0=None
+        self.clicked_label = None
+
+    def forward(self,net_output,gt):
+        if self.click_map==None or self.click_map.sum() == 0:
+            return super().forward(net_output,gt)
+        if self.ignore_label is not None:
+            is_ignored = torch.any(gt.squeeze() == self.ignore_label,axis=[2,3])
+            is_seg = 1 - (is_ignored.int().unsqueeze(2).unsqueeze(2))
+            self.clicked_label = [torch.where(row)[0] for row in self.clicked_label]
+            
+            gt_masked = torch.zeros(gt.shape,device = 'cuda:0')
+            for k in range(gt.shape[0]):
+                mask = (gt[k,...,None] == self.clicked_label[k]).any(-1)
+                gt_masked[k] = torch.where(mask,gt[k],self.ignore_label)
+            error_region_loss = super().forward(net_output,gt_masked)
+        return self.alpha * super().forward(self.net_output0,gt) + ((1-self.alpha)) * error_region_loss
+
 class DeepSupervisionWrapper(torch.nn.Module):
     """ wrapper to make a the deep supervision work with click penalty """
     def __init__(self, loss,scales, weight_factors=None):

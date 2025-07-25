@@ -162,7 +162,7 @@ class Trainer_newloss(nnUNetTrainer_interactive.nnUNetTrainerinteractive):
     def _build_loss(self,):
         """function to define the loss of the model and to configure the deep supervision"""
 
-        loss=Mutils.loss_P0_and_error_region({'batch_dice': self.configuration_manager.batch_dice,
+        loss=Mutils.loss_P0_and_click_label_region({'batch_dice': self.configuration_manager.batch_dice,
                                    'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, {'ignore_index':self.label_manager.ignore_label}, weight_ce=1, weight_dice=1,
                                   ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
 
@@ -213,6 +213,9 @@ class Trainer_newloss(nnUNetTrainer_interactive.nnUNetTrainerinteractive):
                 output = self.network(data)
                 if self.current_epoch> 0 :
                     self.loss.click_map = torch.sum(torch.where(click_map>0,1,0),axis=1)
+                    self.loss.loss.clicked_label = torch.any(click_map>0,dim = [2,3,4]) #to finish
+                    # breakpoint()
+                    # self.loss.loss.clicked_label = np.array(range(self.loss.loss.clicked_label.shape[1]))[self.loss.loss.clicked_label.cpu()]
                 l=self.loss(output,target)
             if self.grad_scaler is not None:
                 self.grad_scaler.scale(l).backward()
