@@ -608,6 +608,54 @@ def click_simulation_test(self,data,target,training_mode=True,click_mode='global
         print('no click for this batch !')
     return data,data[:,1:]
 
+def click_simulation_binary(self,data,target,training_mode=True,click_mode='global'):
+    """ main function that allows us to simulate clicks
+    training_mode : True if you use this function during training, False if it's during validation"""
+    b,c,d,h,w= data.size()  # batch, channel, depth, height, width
+    groundtruth=target[0]
+    click_mask= torch.full((b, c - 1,d, h, w), 0, device=self.device, dtype=torch.float)
+    if np.random.binomial(n=1,p=self.nbr_supervised): #choosing if the batch is gonna be train with clicks or not 
+        self.network.eval() #putting the model in inference mode, needed to simulate click 
+        for k in range(self.max_iter):
+        #we first want to get map probabilities
+            if do_simulate(k,self.max_iter,training_mode):
+                # using current network to have prediction & probabilities 
+                with torch.no_grad():
+                    data[:,1:]=apply_gaussian_bluring(click_mask,(1,2,2),5)
+                    logits = self.network(data)
+                    # probabilities = torch.softmax(logits[0],dim=1)
+                    # prediction = torch.max(probabilities,dim=1)[1]
+                    prediction = torch.max(logits[0],dim=1)[1]
+                for nimage in range(b):
+                        click, chosen_label=select_pixel_3d(groundtruth[nimage,0],prediction[nimage],mode=click_mode,ignore_label=self.label_manager.ignore_label)
+                        # breakpoint()
+                        if click==None:
+                            print('no error big enough,skiping image{} at step {}'.format(nimage,k))
+                            continue
+
+                        # add click to click map
+                        click_mask[nimage,chosen_label,click[0],click[1],click[2]] = 1
+
+                        #second click : 
+                        click, chosen_label=select_pixel_3d(groundtruth[nimage,0],prediction[nimage],mode=click_mode,ignore_label=self.label_manager.ignore_label)
+                        if click==None:
+                            print('no error big enough,skiping image{} at step {}'.format(nimage,k))
+                            continue
+
+                        chosen_label_binary = torch.tensor(np.array(bin(choose_label)[2:].zfill(c-1),dtype = int))
+                        click_mask[nimage,:,click[0],click[1],click[2]] = chosen_label_binary                                                   
+            else:
+                break
+        
+        # here we smoothed the click data
+        data[:,1:]=apply_gaussian_bluring(click_mask,2,5)
+        if training_mode:
+            self.network.train() #putting the model back to training mode 
+            print('all click generated!, starting gradient descent...')
+    else: 
+        print('no click for this batch !')
+    return data,data[:,1:]
+
 
 def label_weight(seg,nlabel):
     """ funtion to compute proportion of pixel that belongs to each labels """
@@ -799,10 +847,7 @@ class loss_P0_and_click_label_region(DC_and_CE_loss):
         if self.click_map==None or self.click_map.sum() == 0:
             return super().forward(net_output,gt)
         if self.ignore_label is not None:
-            is_ignored = torch.any(gt.squeeze() == self.ignore_label,axis=[2,3])
-            is_seg = 1 - (is_ignored.int().unsqueeze(2).unsqueeze(2))
             self.clicked_label = [torch.where(row)[0] for row in self.clicked_label]
-            
             gt_masked = torch.zeros(gt.shape,device = 'cuda:0')
             for k in range(gt.shape[0]):
                 mask = (gt[k,...,None] == self.clicked_label[k]).any(-1)
@@ -1009,6 +1054,7 @@ def screenshot_segmentation(gt,seg_0,seg_f):
         fig.savefig(f'/mnt/rmn_files/0_Wip/New/1_Methodological_Developments/4_Methodologie_Traitement_Image/#8_2022_Re-Segmentation/legs/3d_model_I_fullstack_P0C_alphaexp/seg_analysis_{nimage}.png',
                         dpi=300,bbox_inches='tight')        
         plt.close(fig)
+
 if __name__=='__main__':
     A=click_penalty_loss()
     click_mask=torch.randint(0,2,(2,9,5,5,3))
