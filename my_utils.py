@@ -621,7 +621,7 @@ def click_simulation_binary(self,data,target,training_mode=True,click_mode='glob
             if do_simulate(k,self.max_iter,training_mode):
                 # using current network to have prediction & probabilities 
                 with torch.no_grad():
-                    data[:,1:]=apply_gaussian_bluring(click_mask,(1,2,2),5)
+                    data[:,1:]=apply_gaussian_bluring(click_mask,(1,2,2),5,factor = 1)
                     logits = self.network(data)
                     # probabilities = torch.softmax(logits[0],dim=1)
                     # prediction = torch.max(probabilities,dim=1)[1]
