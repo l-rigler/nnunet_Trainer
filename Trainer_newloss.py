@@ -162,7 +162,7 @@ class Trainer_newloss(nnUNetTrainer_interactive.nnUNetTrainerinteractive):
     def _build_loss(self,):
         """function to define the loss of the model and to configure the deep supervision"""
 
-        loss=Mutils.loss_P0_and_click_label_region({'batch_dice': self.configuration_manager.batch_dice,
+        loss=Mutils.loss_P_and_click_label_region({'batch_dice': self.configuration_manager.batch_dice,
                                    'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, {'ignore_index':self.label_manager.ignore_label}, weight_ce=1, weight_dice=1,
                                   ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
 

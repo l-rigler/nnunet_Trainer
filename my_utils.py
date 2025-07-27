@@ -575,7 +575,7 @@ def click_simulation_test(self,data,target,training_mode=True,click_mode='global
             if do_simulate(k,self.max_iter,training_mode):
                 # using current network to have prediction & probabilities 
                 with torch.no_grad():
-                    data[:,1:]=apply_gaussian_bluring(click_mask,(1,2,2),5)
+                    data[:,1:]=apply_gaussian_bluring(click_mask,2,5)
                     logits = self.network(data)
                     # probabilities = torch.softmax(logits[0],dim=1)
                     # prediction = torch.max(probabilities,dim=1)[1]
@@ -621,7 +621,7 @@ def click_simulation_binary(self,data,target,training_mode=True,click_mode='glob
             if do_simulate(k,self.max_iter,training_mode):
                 # using current network to have prediction & probabilities 
                 with torch.no_grad():
-                    data[:,1:]=apply_gaussian_bluring(click_mask,(1,2,2),5,factor = 1)
+                    data = blurred_data(data,(5,5),(2,2),factor = 1)
                     logits = self.network(data)
                     # probabilities = torch.softmax(logits[0],dim=1)
                     # prediction = torch.max(probabilities,dim=1)[1]
@@ -634,7 +634,8 @@ def click_simulation_binary(self,data,target,training_mode=True,click_mode='glob
                             continue
 
                         # add click to click map
-                        click_mask[nimage,chosen_label,click[0],click[1],click[2]] = 1
+                        chosen_label_binary = torch.tensor(np.array([*bin(chosen_label)[2:].zfill(c-1)],dtype = int))
+                        click_mask[nimage,:,click[0],click[1],click[2]] = chosen_label_binary            
 
                         #second click : 
                         click, chosen_label=select_pixel_3d(groundtruth[nimage,0],prediction[nimage],mode=click_mode,ignore_label=self.label_manager.ignore_label)
@@ -642,13 +643,19 @@ def click_simulation_binary(self,data,target,training_mode=True,click_mode='glob
                             print('no error big enough,skiping image{} at step {}'.format(nimage,k))
                             continue
 
-                        chosen_label_binary = torch.tensor(np.array(bin(choose_label)[2:].zfill(c-1),dtype = int))
+                        chosen_label_binary = torch.tensor(np.array([*bin(chosen_label)[2:].zfill(c-1)],dtype = int))
                         click_mask[nimage,:,click[0],click[1],click[2]] = chosen_label_binary                                                   
             else:
                 break
         
         # here we smoothed the click data
-        data[:,1:]=apply_gaussian_bluring(click_mask,2,5)
+        data[:,1:] = click_mask
+        if data[:,1:].max() == 0 :
+            print('channel a 0 avant blurring')
+        data = blurred_data(data,(5,5),(2,2),factor = 1)
+        if data[:,1:].max() == 0 :
+            print('channel a 0 apres blurring')
+        # breakpoint()
         if training_mode:
             self.network.train() #putting the model back to training mode 
             print('all click generated!, starting gradient descent...')
@@ -802,8 +809,9 @@ class loss_P0_and_click_region(DC_and_CE_loss):
             is_ignored = torch.any(gt.squeeze() == self.ignore_label,axis=[2,3])
             is_seg = 1 - (is_ignored.int().unsqueeze(2).unsqueeze(2))
             self.click_map = self.click_map * is_seg
-        gt_masked = torch.where(self.click_map.unsqueeze(1) > 0,gt,self.ignore_label) # we only consider area where clicks have effect        
+        gt_masked = torch.where(self.click_map.unsqueeze(1) > 0,gt,self.ignore_label) # we only consider area where clicks have effect 
         click_loss = super().forward(net_output,gt_masked)
+
         return self.alpha * super().forward(self.net_output0,gt) + ((1-self.alpha)) * click_loss
     
 class loss_P0_and_error_region(DC_and_CE_loss):
@@ -854,6 +862,32 @@ class loss_P0_and_click_label_region(DC_and_CE_loss):
                 gt_masked[k] = torch.where(mask,gt[k],self.ignore_label)
             error_region_loss = super().forward(net_output,gt_masked)
         return self.alpha * super().forward(self.net_output0,gt) + ((1-self.alpha)) * error_region_loss
+
+class loss_P_and_click_label_region(DC_and_CE_loss):
+    """ loss with penalty on the label were clicks are provided
+    note : you need to import the list of all the label you click on during """
+
+    def __init__(self, soft_dice_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, ignore_label=None,
+                    dice_class=SoftDiceLoss):
+        super().__init__(soft_dice_kwargs, ce_kwargs, weight_ce, weight_dice, ignore_label,
+                    dice_class)
+        self.click_map=None
+        self.alpha=1
+        self.net_output0=None
+        self.clicked_label = None
+
+    def forward(self,net_output,gt):
+        if self.click_map==None or self.click_map.sum() == 0:
+            return super().forward(net_output,gt)
+        if self.ignore_label is not None:
+            self.clicked_label = [torch.where(row)[0] for row in self.clicked_label]
+            gt_masked = torch.zeros(gt.shape,device = 'cuda:0')
+            for k in range(gt.shape[0]):
+                mask = (gt[k,...,None] == self.clicked_label[k]).any(-1)
+                gt_masked[k] = torch.where(mask,gt[k],self.ignore_label)
+            error_region_loss = super().forward(net_output,gt_masked)
+        return self.alpha * super().forward(net_output,gt) + ((1-self.alpha)) * error_region_loss
+
 
 class DeepSupervisionWrapper(torch.nn.Module):
     """ wrapper to make a the deep supervision work with click penalty """
