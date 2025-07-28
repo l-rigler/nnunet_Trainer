@@ -634,7 +634,7 @@ def click_simulation_binary(self,data,target,training_mode=True,click_mode='glob
                             continue
 
                         # add click to click map
-                        chosen_label_binary = torch.tensor(np.array([*bin(chosen_label)[2:].zfill(c-1)],dtype = int))
+                        chosen_label_binary = torch.tensor(np.array([*bin(chosen_label +1)[2:].zfill(c-1)],dtype = int))
                         click_mask[nimage,:,click[0],click[1],click[2]] = chosen_label_binary            
 
                         #second click : 
@@ -643,18 +643,14 @@ def click_simulation_binary(self,data,target,training_mode=True,click_mode='glob
                             print('no error big enough,skiping image{} at step {}'.format(nimage,k))
                             continue
 
-                        chosen_label_binary = torch.tensor(np.array([*bin(chosen_label)[2:].zfill(c-1)],dtype = int))
+                        chosen_label_binary = torch.tensor(np.array([*bin(chosen_label +1)[2:].zfill(c-1)],dtype = int))
                         click_mask[nimage,:,click[0],click[1],click[2]] = chosen_label_binary                                                   
             else:
                 break
         
         # here we smoothed the click data
         data[:,1:] = click_mask
-        if data[:,1:].max() == 0 :
-            print('channel a 0 avant blurring')
         data = blurred_data(data,(5,5),(2,2),factor = 1)
-        if data[:,1:].max() == 0 :
-            print('channel a 0 apres blurring')
         # breakpoint()
         if training_mode:
             self.network.train() #putting the model back to training mode 
