@@ -70,7 +70,7 @@ def erosion_3d(image,ignore_map=None):
         background=(1-image)*ignore_map
         background_dilatation=dilatation_in_3d(background)
         return (1-background_dilatation)*ignore_map
-    
+
 def chamfer_dist_morpho(image,ignore_map=None,iteration=20):
     D={0:image}
     results=torch.zeros(image.shape,device=image.device)
@@ -118,6 +118,13 @@ def do_simulate(k,N,training_mode):
                 return np.random.binomial(n=1,p=1-k/N)
             else:
                 return True
+
+def select_batch_for_click(p,training_mode):
+
+    if training_mode:
+        return np.random.binomial(n=1,p=p)
+    else:
+        return True
 
 def click_simulation(self,data,target,training_mode=True):
     """ main function that allows us to simulate clicks
@@ -373,6 +380,22 @@ def blurred_data(data,kernel_size,sigma,factor=1000):
         data[:, channel] = F.gaussian_blur(data[:, channel], kernel_size, sigma)*factor
     return data       
 
+def normalize(image):
+     """basic normalisation"""
+     return (image-image.min()) / (image.max() - image.min() + 1e-8)
+
+def blurred_data_and_norm(data,kernel_size,sigma,):
+    """ use only for 2D ! """
+    if len(data.shape)==4:
+        n,c,h,w=data.shape
+    if len(data.shape)==5:
+        n,c,d,h,w=data.shape
+    for nimage in range(n):
+        for channel in range(1, c):
+            if data[nimage,channel].sum() > 0:
+                data[nimage, channel] = normalize(F.gaussian_blur(data[nimage, channel], kernel_size, sigma))
+    return data       
+
 def gaussian_kernel_3d(size, sigma):
     """create a gaussian kernel with Pytorch, designed for a 3d usage
     sigma can be int (isotropic model) or 3d vector
@@ -396,7 +419,16 @@ def apply_gaussian_bluring(input,sigma,kernel_size,factor=1000):
     kernel = kernel.reshape(1, 1, *kernel.shape)
     output= TF.conv3d(input,kernel,stride=1,padding='same')
     return output.reshape(n,c,*output.shape[-3:])*factor
- 
+
+def normalize_chans(matrix):
+    """" normalizing clicks channels, matrix should be (c,d,h,w)"""
+    
+    chan_max = torch.amax(matrix,dim = (1,2,3)) 
+    chan_min =torch.amin(matrix,dim =(1,2,3))
+
+    normalized = (matrix-chan_min[:,None,None,None]) / ((chan_max - chan_min) + 1e-8)[:,None,None,None]
+    
+    return normalized     
     
 def alternative_click_simulation_2d(self,data,target,training_mode=True,factor=1000):
 
@@ -568,6 +600,7 @@ def click_simulation_test(self,data,target,training_mode=True,click_mode='global
     b,c,d,h,w= data.size()  # batch, channel, depth, height, width
     groundtruth=target[0]
     click_mask= torch.full((b, c - 1,d, h, w), 0, device=self.device, dtype=torch.float)
+    self.click_list = []
     if np.random.binomial(n=1,p=self.nbr_supervised): #choosing if the batch is gonna be train with clicks or not 
         self.network.eval() #putting the model in inference mode, needed to simulate click 
         for k in range(self.max_iter):
@@ -582,6 +615,7 @@ def click_simulation_test(self,data,target,training_mode=True,click_mode='global
                     prediction = torch.max(logits[0],dim=1)[1]
                 for nimage in range(b):
                         click, chosen_label=select_pixel_3d(groundtruth[nimage,0],prediction[nimage],mode=click_mode,ignore_label=self.label_manager.ignore_label)
+                        
                         # breakpoint()
                         if click==None:
                             print('no error big enough,skiping image{} at step {}'.format(nimage,k))
@@ -589,18 +623,73 @@ def click_simulation_test(self,data,target,training_mode=True,click_mode='global
 
                         # add click to click map
                         click_mask[nimage,chosen_label,click[0],click[1],click[2]] = 1
-
+                        self.click_list.append((nimage,chosen_label,click[0],click[1],click[2]))
                         #second click : 
                         click, chosen_label=select_pixel_3d(groundtruth[nimage,0],prediction[nimage],mode=click_mode,ignore_label=self.label_manager.ignore_label)
                         if click==None:
                             print('no error big enough,skiping image{} at step {}'.format(nimage,k))
                             continue
-                        click_mask[nimage,chosen_label,click[0],click[1],click[2]] = 1                                                    
+                        click_mask[nimage,chosen_label,click[0],click[1],click[2]] = 1 
+                        self.click_list.append((nimage,chosen_label,click[0],click[1],click[2]))                                                   
             else:
                 break
         
         # here we smoothed the click data
         data[:,1:]=apply_gaussian_bluring(click_mask,2,5)
+        if training_mode:
+            self.network.train() #putting the model back to training mode 
+            print('all click generated!, starting gradient descent...')
+    else: 
+        print('no click for this batch !')
+    return data,data[:,1:]
+
+
+def click_simulation_normalized(self,data,target,training_mode=True,click_mode='global'):
+    """ main function that allows us to simulate clicks
+    training_mode : True if you use this function during training, False if it's during validation"""
+    b,c,d,h,w= data.size()  # batch, channel, depth, height, width
+    groundtruth=target[0]
+    click_mask= torch.full((b, c - 1,d, h, w), 0, device=self.device, dtype=torch.float)
+    self.click_list = []
+    if np.random.binomial(n=1,p=self.nbr_supervised): #choosing if the batch is gonna be train with clicks or not 
+        self.network.eval() #putting the model in inference mode, needed to simulate click 
+        for k in range(self.max_iter):
+        #we first want to get map probabilities
+            if do_simulate(k,self.max_iter,training_mode):
+                # using current network to have prediction & probabilities 
+                with torch.no_grad():
+                    data[:,1:]=apply_gaussian_bluring(click_mask,2,5,factor = 1 )
+                    for ii in range(b):
+                        data[ii] = normalize_chans(data[ii])
+                    logits = self.network(data)
+                    # probabilities = torch.softmax(logits[0],dim=1)
+                    # prediction = torch.max(probabilities,dim=1)[1]
+                    prediction = torch.max(logits[0],dim=1)[1]
+                for nimage in range(b):
+                        click, chosen_label=select_pixel_3d(groundtruth[nimage,0],prediction[nimage],mode=click_mode,ignore_label=self.label_manager.ignore_label)
+                        
+                        # breakpoint()
+                        if click==None:
+                            print('no error big enough,skiping image{} at step {}'.format(nimage,k))
+                            continue
+
+                        # add click to click map
+                        click_mask[nimage,chosen_label,click[0],click[1],click[2]] = 1
+                        self.click_list.append((nimage,chosen_label,click[0],click[1],click[2]))
+                        #second click : 
+                        click, chosen_label=select_pixel_3d(groundtruth[nimage,0],prediction[nimage],mode=click_mode,ignore_label=self.label_manager.ignore_label)
+                        if click==None:
+                            print('no error big enough,skiping image{} at step {}'.format(nimage,k))
+                            continue
+                        click_mask[nimage,chosen_label,click[0],click[1],click[2]] = 1 
+                        self.click_list.append((nimage,chosen_label,click[0],click[1],click[2]))                                                   
+            else:
+                break
+        
+        # here we smoothed the click data
+        data[:,1:]=apply_gaussian_bluring(click_mask,2,5,factor = 1)
+        for ii in range(b):
+                data[ii] = normalize_chans(data[ii])
         if training_mode:
             self.network.train() #putting the model back to training mode 
             print('all click generated!, starting gradient descent...')
@@ -621,7 +710,8 @@ def click_simulation_binary(self,data,target,training_mode=True,click_mode='glob
             if do_simulate(k,self.max_iter,training_mode):
                 # using current network to have prediction & probabilities 
                 with torch.no_grad():
-                    data = blurred_data(data,(5,5),(2,2),factor = 1)
+                    data = blurred_data_and_norm(data,(5,5),(2,2))
+                    d
                     logits = self.network(data)
                     # probabilities = torch.softmax(logits[0],dim=1)
                     # prediction = torch.max(probabilities,dim=1)[1]
@@ -650,7 +740,7 @@ def click_simulation_binary(self,data,target,training_mode=True,click_mode='glob
         
         # here we smoothed the click data
         data[:,1:] = click_mask
-        data = blurred_data(data,(5,5),(2,2),factor = 1)
+        data = blurred_data_and_norm(data,(5,5),(2,2))
         # breakpoint()
         if training_mode:
             self.network.train() #putting the model back to training mode 
@@ -884,7 +974,28 @@ class loss_P_and_click_label_region(DC_and_CE_loss):
             error_region_loss = super().forward(net_output,gt_masked)
         return self.alpha * super().forward(net_output,gt) + ((1-self.alpha)) * error_region_loss
 
+class cubic_loss(loss_P0_and_click_region):
 
+    def __init__(self, soft_dice_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, ignore_label=None, dice_class=SoftDiceLoss):
+        super().__init__(soft_dice_kwargs, ce_kwargs, weight_ce, weight_dice, ignore_label, dice_class)
+        self.len_c = 20
+        self.click_list = []
+
+    def forward(self, net_output, gt):
+        #building squared click map here 
+        if self.click_map==None or self.click_map.sum() == 0:
+            pass
+        else: 
+            self.click_map = self.click_map*0
+        for k in self.click_list:
+            nimage,label,z,y,x = k 
+            i_pos = np.array([max(z - self.len_c//2,0) ,max(y - self.len_c//2,0),max(x - self.len_c//2,0)]) #lower bounds of the window
+            f_pos = np.array([min(z + self.len_c//2,self.click_map.shape[1]),min(y + self.len_c//2,self.click_map.shape[2]),min(x + self.len_c//2,self.click_map.shape[3])]) #higher bounds
+            self.click_map[nimage, i_pos[0] : f_pos[0],
+                                            i_pos[1] : f_pos[1],
+                                            i_pos[2] : f_pos[2]]  = 1
+        return super().forward(net_output, gt)
+    
 class DeepSupervisionWrapper(torch.nn.Module):
     """ wrapper to make a the deep supervision work with click penalty """
     def __init__(self, loss,scales, weight_factors=None):

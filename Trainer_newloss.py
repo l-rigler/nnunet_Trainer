@@ -240,7 +240,7 @@ class Trainer_newloss(nnUNetTrainer_interactive.nnUNetTrainerinteractive):
             target = [i.to(self.device, non_blocking=True) for i in target]
         else:
             target = target.to(self.device, non_blocking=True)
-        
+            
         with torch.no_grad():
             data[:,1:]=data[:,1:]*0
             net_output0=self.network(data)
@@ -346,7 +346,7 @@ class Trainer_cubic_weighted_loss(nnUNetTrainer_interactive.nnUNetTrainerinterac
     def _build_loss(self,):
         """function to define the loss of the model and to configure the deep supervision"""
 
-        loss=Mutils.loss_P0_and_click_label_region({'batch_dice': self.configuration_manager.batch_dice,
+        loss=Mutils.cubic_loss({'batch_dice': self.configuration_manager.batch_dice,
                                    'smooth': 1e-5, 'do_bg': False, 'ddp': self.is_ddp}, {'ignore_index':self.label_manager.ignore_label}, weight_ce=1, weight_dice=1,
                                   ignore_label=self.label_manager.ignore_label, dice_class=MemoryEfficientSoftDiceLoss)
 
@@ -383,6 +383,7 @@ class Trainer_cubic_weighted_loss(nnUNetTrainer_interactive.nnUNetTrainerinterac
                 net_output0=self.network(data)
                 self.loss.net_output0=net_output0
                 data,click_map=self.add_guidance(data,target,'global')
+                self.loss.loss.click_list = self.click_list
         self.optimizer.zero_grad(set_to_none=True)
         # Autocast can be annoying
         # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.
@@ -397,6 +398,7 @@ class Trainer_cubic_weighted_loss(nnUNetTrainer_interactive.nnUNetTrainerinterac
                 output = self.network(data)
                 if self.current_epoch> 0 :
                     self.loss.click_map = torch.sum(torch.where(click_map>0,1,0),axis=1)
+                    self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.N_alpha))
                 l=self.loss(output,target)
             if self.grad_scaler is not None:
                 self.grad_scaler.scale(l).backward()
@@ -429,7 +431,8 @@ class Trainer_cubic_weighted_loss(nnUNetTrainer_interactive.nnUNetTrainerinterac
             if self.current_epoch > 0 : 
                 data,click_map=self.add_guidance(data,target,training_mode=False)
                 self.loss.click_map = torch.sum(torch.where(click_map>0,1,0),axis=1)
-
+                self.loss.loss.click_list = self.click_list
+                self.loss.loss.alpha = np.exp(-5*(self.current_epoch/self.N_alpha))
         # Autocast can be annoying
         # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
@@ -488,3 +491,4 @@ class Trainer_cubic_weighted_loss(nnUNetTrainer_interactive.nnUNetTrainerinterac
             fn_hard = fn_hard[1:]
 
         return {'loss': l.detach().cpu().numpy(), 'tp_hard': tp_hard, 'fp_hard': fp_hard, 'fn_hard': fn_hard}
+

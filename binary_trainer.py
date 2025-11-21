@@ -126,7 +126,6 @@ def binary_to_decimal(image,):
         powers = (1 << np.arange(nchan)).astype(image.dtype)  
         return np.tensordot(powers, image, axes=(0, 0))
 
-# class nnUNetTrainerinteractive(nnUNetTrainer.nnUNetTrainer):
 class binary_Trainer(nnUNetTrainer_interactive.nnUNetTrainerinteractive):
     """custom nnUNet Trainer that train also for interactive segmentation and prediction refinement"""
 
