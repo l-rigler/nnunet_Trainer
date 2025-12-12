@@ -123,7 +123,7 @@ from torch import distributed as dist
 from torch.cuda import device_count
 from torch.cuda.amp import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
-
+import nnunetv2.training.nnUNetTrainer.nnUNetTrainer as nnUNetTrainer
 
 class Trainer_cubic_alpha_400(nnUNetTrainer_interactive.nnUNetTrainerinteractive):
     """custom nnUNet Trainer -> only difference is that the second term of the loss is not a sphere around the click but a big stupid cube.

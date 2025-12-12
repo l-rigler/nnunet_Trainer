@@ -996,6 +996,30 @@ class cubic_loss(loss_P0_and_click_region):
                                             i_pos[2] : f_pos[2]]  = 1
         return super().forward(net_output, gt)
     
+class rectangle_loss(cubic_loss):
+
+    
+    def __init__(self, soft_dice_kwargs, ce_kwargs, weight_ce=1, weight_dice=1, ignore_label=None, dice_class=SoftDiceLoss):
+        super().__init__(soft_dice_kwargs, ce_kwargs, weight_ce, weight_dice, ignore_label, dice_class)
+        self.len_xy = 10
+        self.len_z = 30
+        self.click_list = []
+
+    def forward(self, net_output, gt):
+        #building squared click map here 
+        if self.click_map==None or self.click_map.sum() == 0:
+            pass
+        else: 
+            self.click_map = self.click_map*0
+        for k in self.click_list:
+            nimage,label,z,y,x = k 
+            i_pos = np.array([max(z - self.len_z//2,0) ,max(y - self.len_xy//2,0),max(x - self.len_xy//2,0)]) #lower bounds of the window
+            f_pos = np.array([min(z + self.len_z//2,self.click_map.shape[1]),min(y + self.len_xy//2,self.click_map.shape[2]),min(x + self.len_xy//2,self.click_map.shape[3])]) #higher bounds
+            self.click_map[nimage, i_pos[0] : f_pos[0],
+                                            i_pos[1] : f_pos[1],
+                                            i_pos[2] : f_pos[2]]  = 1
+        return super().forward(net_output, gt)
+    
 class DeepSupervisionWrapper(torch.nn.Module):
     """ wrapper to make a the deep supervision work with click penalty """
     def __init__(self, loss,scales, weight_factors=None):
